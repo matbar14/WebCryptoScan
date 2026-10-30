@@ -750,10 +750,14 @@ def scan_global(body: dict):
         if provider not in ("auto", "wayback", "arquivo"):
             raise HTTPException(status_code=400, detail="provider: auto | wayback | arquivo")
         delta = bool(body.get("delta", False))
+        prioritize = bool(body.get("prioritize", True))
+        depth = max(0, min(int(body.get("depth", 0) or 0), 2))
         # run_global читает max_urls (не max_num) — иначе слайдер лимита не действует
-        params.update(domain=domain, provider=provider, delta=delta,
+        params.update(domain=domain, provider=provider, delta=delta, depth=depth,
+                      prioritize=prioritize,
                       max_urls=max(5, min(int(body.get("max_urls", 60)), 400)))
-        label = f"Архивы: {domain}" + (" — дельта" if delta else "")
+        label = (f"Архивы: {domain}" + (" — дельта" if delta else "")
+                 + (f" — рекурсия {depth}" if depth else ""))
     elif mode == "dorks":
         presets = [p for p in (body.get("presets") or []) if p in DORK_PRESETS]
         custom = str(body.get("custom", "") or "").strip()
@@ -770,8 +774,10 @@ def scan_global(body: dict):
         mask = str(body.get("mask", "") or "").strip()
         if not mask:
             raise HTTPException(status_code=400, detail="Укажите маску URL (например, example.com/*)")
-        params.update(mask=mask, max_urls=max(5, min(int(body.get("max_urls", 60)), 400)))
-        label = f"Common Crawl: {mask}"
+        cc_depth = max(0, min(int(body.get("depth", 0) or 0), 2))
+        params.update(mask=mask, depth=cc_depth,
+                      max_urls=max(5, min(int(body.get("max_urls", 60)), 400)))
+        label = f"Common Crawl: {mask}" + (f" — рекурсия {cc_depth}" if cc_depth else "")
     else:  # github
         presets = [p for p in (body.get("presets") or []) if p in GITHUB_PRESETS]
         custom = str(body.get("custom", "") or "").strip()

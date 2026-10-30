@@ -69,6 +69,8 @@ export function SourcePanel({
     domain?: string;
     provider?: "auto" | "wayback" | "arquivo";
     delta?: boolean;
+    prioritize?: boolean;
+    depth?: number;
     mask?: string;
     presets?: string[];
     custom?: string;
@@ -95,6 +97,8 @@ export function SourcePanel({
   const [gDomain, setGDomain] = useState("");
   const [gProvider, setGProvider] = useState<"auto" | "wayback" | "arquivo">("auto");
   const [gDelta, setGDelta] = useState(false);
+  const [gPrioritize, setGPrioritize] = useState(true);
+  const [gDepth, setGDepth] = useState("0");
   const [gDomState, setGDomState] = useState<GlobalDomainState | null>(null);
   const [gMask, setGMask] = useState("");
   const [gDorkPresets, setGDorkPresets] = useState<string[]>(["open_dirs"]);
@@ -149,11 +153,11 @@ export function SourcePanel({
 
   const startGlobal = () => {
     if (gMode === "archive") {
-      onGlobal({ mode: "archive", domain: gDomain.trim(), provider: gProvider, delta: gDelta, max_urls: gMaxUrls });
+      onGlobal({ mode: "archive", domain: gDomain.trim(), provider: gProvider, delta: gDelta, prioritize: gPrioritize, depth: Number(gDepth), max_urls: gMaxUrls });
     } else if (gMode === "dorks") {
       onGlobal({ mode: "dorks", presets: gDorkPresets, custom: gCustom.trim(), engines: gEngines, max_pages: gMaxPages, max_files: gMaxFiles });
     } else if (gMode === "commoncrawl") {
-      onGlobal({ mode: "commoncrawl", mask: gMask.trim(), max_urls: gMaxUrls });
+      onGlobal({ mode: "commoncrawl", mask: gMask.trim(), depth: Number(gDepth), max_urls: gMaxUrls });
     } else {
       onGlobal({ mode: "github", presets: gGhPresets, custom: gCustom.trim(), token: gToken.trim(), max_files: gMaxFiles });
     }
@@ -418,6 +422,17 @@ export function SourcePanel({
               </span>
             </label>
 
+            {/* приоритизация: кошельки наверх очереди */}
+            <label className="flex items-start gap-2 text-sm text-zinc-300 cursor-pointer">
+              <Checkbox checked={gPrioritize} onCheckedChange={(v) => setGPrioritize(v === true)} disabled={busy} className="mt-0.5" />
+              <span>
+                Приоритезация URL по ключевым словам
+                <span className="ml-1 text-[10px] text-zinc-600">
+                  wallet / seed / backup / keys… поднимаются в начало очереди — лимит не съедают посторонние страницы
+                </span>
+              </span>
+            </label>
+
             {gDomState && (
               <div className="rounded-md border border-zinc-800 bg-zinc-950/60 p-2.5 text-xs text-zinc-400 space-y-1">
                 <div>
@@ -448,6 +463,23 @@ export function SourcePanel({
             <div className="space-y-2">
               <Label className="text-zinc-300">Максимум URL: {gMaxUrls}</Label>
               <Slider value={[gMaxUrls]} min={10} max={400} step={10} onValueChange={(v) => setGMaxUrls(v[0])} disabled={busy} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-zinc-300">Рекурсия: ссылки со страниц</Label>
+              <Select value={gDepth} onValueChange={setGDepth} disabled={busy}>
+                <SelectTrigger className="bg-zinc-950/60 border-zinc-800">
+                  <SelectValue placeholder="Глубина рекурсии" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-900 border-zinc-800">
+                  <SelectItem value="0">Выключена</SelectItem>
+                  <SelectItem value="1">1 уровень</SelectItem>
+                  <SelectItem value="2">2 уровня</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-zinc-500">
+                Из скачанных страниц берутся ссылки того же домена и докачиваются из того же
+                снимка архива. Бюджет рекурсии — ещё до {gMaxUrls} URL сверху.
+              </p>
             </div>
           </div>
         )}
@@ -535,6 +567,23 @@ export function SourcePanel({
             <div className="space-y-2">
               <Label className="text-zinc-300">Максимум URL: {gMaxUrls}</Label>
               <Slider value={[gMaxUrls]} min={10} max={400} step={10} onValueChange={(v) => setGMaxUrls(v[0])} disabled={busy} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-zinc-300">Рекурсия: ссылки со страниц</Label>
+              <Select value={gDepth} onValueChange={setGDepth} disabled={busy}>
+                <SelectTrigger className="bg-zinc-950/60 border-zinc-800">
+                  <SelectValue placeholder="Глубина рекурсии" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-900 border-zinc-800">
+                  <SelectItem value="0">Выключена</SelectItem>
+                  <SelectItem value="1">1 уровень</SelectItem>
+                  <SelectItem value="2">2 уровня</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-zinc-500">
+                Из скачанных страниц берутся ссылки того же домена и докачиваются напрямую
+                (бюджет рекурсии — ещё до {gMaxUrls} URL сверху).
+              </p>
             </div>
             <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-300">
               index.commoncrawl.org часто недоступен с дата-центровских IP — из дата-центра режим

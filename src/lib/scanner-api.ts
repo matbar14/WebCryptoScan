@@ -262,6 +262,8 @@ export async function scanGlobal(params: {
   domain?: string;
   provider?: "auto" | "wayback" | "arquivo";
   delta?: boolean;
+  prioritize?: boolean;
+  depth?: number;
   mask?: string;
   presets?: string[];
   custom?: string;

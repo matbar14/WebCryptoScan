@@ -29,6 +29,7 @@ import json
 import re
 import threading
 import zipfile
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, unquote, urljoin, urlparse
@@ -57,6 +58,31 @@ HTML_MIMES = ("text/html", "application/xhtml")
 
 _ARQUIVO_REPLAY = "https://arquivo.pt/noFrame/replay/{ts}id_/{url}"
 _WAYBACK_REPLAY = "https://web.archive.org/web/{ts}id_/{url}"
+
+# --- Приоритизация очереди URL ------------------------------------------------------
+#
+# Лимит «Максимум URL» легко съедают страницы-болтовня, а нам нужны кошельки.
+# Поэтому очередь сортируется: URL с ключевыми словами (кошельки/сиды/бэкапы...)
+# идут первыми, внутри одинакового ранга — картинки и документы, потом страницы.
+
+PRIORITIZE_KEYWORDS = (
+    "wallet", "seed", "mnemonic", "private", "backup", "recover", "passphrase",
+    "keystore", "metamask", "electrum", "paperwallet", "paper-wallet", "keys",
+    "wallet.dat", "privkey", "wif", "bip39", "bip38", "bitcoin", "btc",
+    "ethereum", "monero", "xrp", "crypto", "secret", "coin",
+)
+
+_KIND_RANK = {"image": 0, "doc": 1, "page": 2}
+
+# что из страниц рекурсии точно не нужно (остальное — страницы, картинки, документы)
+_LINK_JUNK_EXTS = {".css", ".js", ".mjs", ".rss", ".atom", ".ico", ".woff", ".woff2",
+                   ".ttf", ".otf", ".eot", ".dtd", ".xsd", ".ashx", ".axd"}
+
+
+def _url_priority_score(url: str) -> int:
+    """Сколько ключевых слов встретилось в URL (без учёта регистра, %XX раскрываются)."""
+    low = unquote(url or "").lower()
+    return sum(1 for kw in PRIORITIZE_KEYWORDS if kw in low)
 
 _UA = _HEADERS["User-Agent"]
 
@@ -284,6 +310,46 @@ def split_kind(url: str, mime: str) -> str:
     return "skip"
 
 
+def _extract_page_links(html: str, base_url: str, limit: int = 20) -> list[str]:
+    """Ссылки со страницы того же домена — материал для рекурсии.
+
+    Остаётся то, что конвейер умеет переварить (картинки, документы, другие
+    страницы); стили, скрипты, внешние домены и мусор отфильтровываются.
+    """
+    try:
+        base_host = urlparse(base_url).netloc.lower().removeprefix("www.")
+    except ValueError:
+        return []
+    if not base_host:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for href in re.findall(r'''href=["']([^"'\s>]+)["']''', html, re.I):
+        href = unquote(href.strip())
+        if not href or href.startswith(("javascript:", "mailto:", "data:", "tel:", "#")):
+            continue
+        try:
+            full = urljoin(base_url, href)
+        except ValueError:
+            continue
+        if not full.startswith(("http://", "https://")):
+            continue
+        full = full.split("#", 1)[0]
+        if not full or full in seen:
+            continue
+        try:
+            host = urlparse(full).netloc.lower().removeprefix("www.")
+        except ValueError:
+            continue
+        if host != base_host or _url_ext(full) in _LINK_JUNK_EXTS:
+            continue
+        seen.add(full)
+        out.append(full)
+        if len(out) >= limit:
+            break
+    return out
+
+
 # --- Универсальная загрузка -----------------------------------------------------------
 
 class _Store:
@@ -432,8 +498,14 @@ def _unpack_zip(data: bytes, url: str, store: _Store, depth: int) -> None:
             _route_bytes(b, "", inner_url, store, depth + 1)
 
 
-def _fetch_item(url: str, store: _Store, *, timeout: tuple[float, float] = (12, 40)) -> bool:
-    """Скачивает один URL и раскладывает контент. True — что-то сохранили."""
+def _fetch_item(url: str, store: _Store, *, timeout: tuple[float, float] = (12, 40),
+                link_base: str = "", link_sink: list[str] | None = None,
+                link_limit: int = 20) -> bool:
+    """Скачивает один URL и раскладывает контент. True — что-то сохранили.
+
+    link_base + link_sink: если контент — страница, из HTML достаются ссылки того
+    же домена, что и link_base, и дописываются в link_sink (для рекурсии).
+    """
     try:
         r = requests.get(url, headers=_HEADERS, timeout=timeout, stream=True)
         if r.status_code in (403, 429):
@@ -447,10 +519,85 @@ def _fetch_item(url: str, store: _Store, *, timeout: tuple[float, float] = (12, 
             store.counters["skipped"] += 1
             return False
         ct = r.headers.get("content-type", "")
+        if link_sink is not None and link_base:
+            kind = split_kind(url, ct)
+            if kind == "skip" and ct:
+                kind = split_kind(url, "")
+            if kind == "page":
+                try:
+                    html = data.decode("utf-8", errors="replace")[:3 * 1024 * 1024]
+                    link_sink.extend(_extract_page_links(html, link_base, link_limit))
+                except Exception:  # noqa: BLE001 — битый HTML не роняет загрузку
+                    pass
         return _route_bytes(data, ct, url, store) != "skip"
     except Exception:  # noqa: BLE001 — одна битая ссылка не роняет джобу
         store.counters["skipped"] += 1
         return False
+
+
+def _fetch_with_recursion(items: list[dict], *, build_url: Callable[[dict], str],
+                          depth: int, budget: int, store: _Store,
+                          prog: Callable[[str, int, int], None], label: str) -> dict:
+    """Качает очередь URL; найденные страницы отдают ссылки того же домена —
+    они становятся следующим уровнем очереди (BFS до depth).
+
+    items — [{"url": оригинал, "ts": момент снимка}]; build_url(it) -> URL скачивания
+    (для архива это replay-ссылка на момент снимка, для живых источников — сам URL).
+    budget — суммарный лимит рекурсивных загрузок по всем уровням.
+    Возвращает {"depth", "found", "fetched"} для отчёта в UI.
+    """
+    stats = {"depth": depth, "found": 0, "fetched": 0}
+    total = len(items)
+    if depth <= 0:
+        done = 0
+        for it in items:
+            _fetch_item(build_url(it), store)
+            done += 1
+            if done % 5 == 0 or done == total:
+                prog(f"{label}: {done}/{total}", done, total)
+        return stats
+
+    seen: set[str] = {it["url"] for it in items}
+    frontier: list[tuple[str, str]] = []   # (оригинальный URL, ts снимка)
+    done = 0
+    for it in items:
+        sink: list[str] = []
+        _fetch_item(build_url(it), store, link_base=it["url"], link_sink=sink)
+        fresh = [l for l in sink if l not in seen]
+        for l in fresh:
+            seen.add(l)
+        frontier.extend((l, str(it.get("ts", ""))) for l in fresh)
+        stats["found"] += len(fresh)
+        done += 1
+        if done % 5 == 0 or done == total:
+            prog(f"{label}: {done}/{total}", done, total)
+
+    level = 1
+    while level <= depth and frontier and budget > 0:
+        plan = frontier[:budget]
+        leftover = frontier[len(plan):]
+        collect_more = level < depth
+        nxt: list[tuple[str, str]] = []
+        done = 0
+        for base_url, ts in plan:
+            sink: list[str] | None = [] if collect_more else None
+            if _fetch_item(build_url({"url": base_url, "ts": ts}), store,
+                           link_base=base_url if collect_more else None,
+                           link_sink=sink):
+                stats["fetched"] += 1
+            if sink:
+                fresh = [l for l in sink if l not in seen]
+                for l in fresh:
+                    seen.add(l)
+                nxt.extend((l, ts) for l in fresh)
+                stats["found"] += len(fresh)
+            budget -= 1
+            done += 1
+            if done % 5 == 0 or done == len(plan):
+                prog(f"{label} — рекурсия, уровень {level}: {done}/{len(plan)}", done, len(plan))
+        frontier = (nxt + leftover) if collect_more else []
+        level += 1
+    return stats
 
 
 # --- Режим archive: CDX-перечисление домена -------------------------------------------
@@ -843,6 +990,8 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
         provider = str(params.get("provider", "auto") or "auto")
         max_urls = max(5, min(int(params.get("max_urls", 60)), 400))
         delta = bool(params.get("delta"))
+        prioritize = bool(params.get("prioritize", True))
+        depth = max(0, min(int(params.get("depth", 0) or 0), 2))
 
         from_ts = ""
         prev: dict | None = None
@@ -876,7 +1025,23 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
             result["sources"]["cdx"]["images_found"] = len(split["image"])
             result["sources"]["cdx"]["pages_found"] = len(split["page"])
             result["sources"]["cdx"]["docs_found"] = len(split["doc"])
-            queue = (split["image"] + split["doc"] + split["page"])[:max_urls]
+            combined = [(k, it) for k in ("image", "doc", "page") for it in split[k]]
+            if prioritize:
+                # URL с ключевыми словами — наверх, далее картинки/документы,
+                # потом страницы; внутри ранга — свежие снимки первыми
+                decorated = [(_url_priority_score(it["url"]), -_KIND_RANK[k],
+                              str(it.get("ts", "")), n, k, it)
+                             for n, (k, it) in enumerate(combined)]
+                decorated.sort(key=lambda t: (t[0], t[1], t[2], t[3]), reverse=True)
+                combined = [(t[4], t[5]) for t in decorated]
+            queue = [it for _, it in combined][:max_urls]
+            if prioritize:
+                result["sources"]["cdx"]["prioritize"] = {
+                    "enabled": True,
+                    "keywords_hit": sum(1 for _, it in combined if _url_priority_score(it["url"]) > 0),
+                    "queued_hit": sum(1 for it in queue if _url_priority_score(it["url"]) > 0),
+                    "top": [it["url"] for it in queue[:4]],
+                }
             # граница дельты пишется сразу после перечисления: загрузки могут
             # длиться долго, а перечисленный охват от этого не меняется
             if res["provider"]:
@@ -885,12 +1050,15 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
                     queued_ts=[str(i.get("ts", "")) for i in queue if i.get("ts")],
                     max_urls=max_urls,
                 )
-            done = 0
-            for it in queue:
-                _fetch_item(_replay_url(res["provider"] or "arquivo", it), store)
-                done += 1
-                if done % 5 == 0 or done == len(queue):
-                    prog(f"Загрузка из архива: {done}/{len(queue)}", done, len(queue))
+            provider_name = res["provider"] or "arquivo"
+            rec = _fetch_with_recursion(
+                queue,
+                build_url=lambda it, p=provider_name: _replay_url(p, it),
+                depth=depth, budget=min(max_urls, 120),
+                store=store, prog=prog, label="Загрузка из архива",
+            )
+            if depth > 0:
+                result["sources"]["cdx"]["recursion"] = rec
         elif delta and from_ts and res["provider"]:
             result["sources"]["cdx"]["note"] = (
                 "новых снимков с последнего прохода не найдено — домен уже охвачен"
@@ -990,12 +1158,15 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
             "count": len(res["items"]), "index": res["index"], "error": res["error"],
             "note": None if res["items"] else "index.commoncrawl.org недоступен с этого сервера; на локальной машине обычно работает",
         }
-        done = 0
-        for it in res["items"]:
-            _fetch_item(it["url"], store)
-            done += 1
-            if done % 5 == 0 or done == len(res["items"]):
-                prog(f"Загрузка: {done}/{len(res['items'])}", done, len(res["items"]))
+        cc_depth = max(0, min(int(params.get("depth", 0) or 0), 2))
+        rec = _fetch_with_recursion(
+            [{"url": it["url"], "ts": ""} for it in res["items"]],
+            build_url=lambda it: it["url"],
+            depth=cc_depth, budget=min(max_urls, 120),
+            store=store, prog=prog, label="Загрузка",
+        )
+        if cc_depth > 0:
+            result["sources"]["commoncrawl"]["recursion"] = rec
 
     elif mode == "github":
         presets = params.get("presets") or []

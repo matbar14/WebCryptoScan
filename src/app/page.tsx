@@ -147,6 +147,8 @@ export default function Home() {
       domain?: string;
       provider?: "auto" | "wayback" | "arquivo";
       delta?: boolean;
+      prioritize?: boolean;
+      depth?: number;
       mask?: string;
       presets?: string[];
       custom?: string;
