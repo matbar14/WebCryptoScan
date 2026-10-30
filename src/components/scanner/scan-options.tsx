@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, ListChecks, ScanLine, Shapes, SlidersHorizontal, TextCursorInput } from "lucide-react";
+import { Coins, KeyRound, ListChecks, ScanLine, Shapes, SlidersHorizontal, TextCursorInput } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { ScanOptions } from "@/lib/scanner-api";
@@ -41,6 +41,12 @@ const ITEMS: { key: keyof ScanOptions; label: string; hint: string; icon: React.
     label: "Hex-ключи",
     hint: "сырой ключ, 64 символа",
     icon: <KeyRound className="h-3.5 w-3.5" aria-hidden />,
+  },
+  {
+    key: "detect_addresses",
+    label: "Адреса и мультивалютность",
+    hint: "BTC, ETH, LTC, DOGE, DASH, BCH, XRP, TRX, SOL + адреса из ключей/сидов",
+    icon: <Coins className="h-3.5 w-3.5" aria-hidden />,
   },
   {
     key: "preprocess",

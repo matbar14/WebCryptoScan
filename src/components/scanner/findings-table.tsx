@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -11,20 +12,74 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useState } from "react";
-import { isSeedType, typeLabel, type Job } from "@/lib/scanner-api";
+import {
+  ADDRESS_KEY_LABELS,
+  ADDRESS_ORDER,
+  isAddressType,
+  isKeyType,
+  isSeedType,
+  typeLabel,
+  type Finding,
+  type Job,
+} from "@/lib/scanner-api";
 import { CopyValue } from "./copy-value";
 
-type Filter = "all" | "keys" | "seeds";
+type Filter = "all" | "keys" | "seeds" | "addresses";
+
+/** Мультивалютные адреса, выведенные из одного ключа/сида. */
+function AddressRows({ addresses }: { addresses: Record<string, string> }) {
+  const [expanded, setExpanded] = useState(false);
+  const keys = ADDRESS_ORDER.filter((k) => addresses[k]);
+  const rest = Object.keys(addresses).filter((k) => !ADDRESS_ORDER.includes(k as never));
+  const all = [...keys, ...rest];
+  if (all.length === 0) return null;
+
+  const shown = expanded ? all : all.slice(0, 2);
+  const hidden = all.length - shown.length;
+
+  return (
+    <div className="space-y-1 pt-1">
+      {shown.map((k) => (
+        <CopyValue key={k} value={addresses[k]} label={ADDRESS_KEY_LABELS[k] ?? k} />
+      ))}
+      {hidden > 0 && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-[11px] text-zinc-500 hover:text-emerald-400"
+          onClick={() => setExpanded(true)}
+          aria-label={`Показать ещё ${hidden} сетей`}
+        >
+          ещё {hidden} {hidden === 1 ? "сеть" : hidden < 5 ? "сети" : "сетей"}…
+        </Button>
+      )}
+    </div>
+  );
+}
 
 export function FindingsTable({ job }: { job: Job }) {
   const [filter, setFilter] = useState<Filter>("all");
 
+  const counts = useMemo(() => {
+    const keys = job.findings.filter((f) => isKeyType(f.type)).length;
+    const seeds = job.findings.filter((f) => isSeedType(f.type)).length;
+    const addresses = job.findings.filter((f) => isAddressType(f.type)).length;
+    return { keys, seeds, addresses };
+  }, [job.findings]);
+
   const rows = useMemo(() => {
-    if (filter === "keys") return job.findings.filter((f) => !isSeedType(f.type));
+    if (filter === "keys") return job.findings.filter((f) => isKeyType(f.type));
     if (filter === "seeds") return job.findings.filter((f) => isSeedType(f.type));
+    if (filter === "addresses") return job.findings.filter((f) => isAddressType(f.type));
     return job.findings;
   }, [job.findings, filter]);
+
+  const badgeClass = (type: string) =>
+    isSeedType(type)
+      ? "border-amber-400/40 bg-amber-400/10 text-amber-300 whitespace-nowrap"
+      : isAddressType(type)
+        ? "border-sky-400/40 bg-sky-400/10 text-sky-300 whitespace-nowrap"
+        : "border-emerald-400/40 bg-emerald-400/10 text-emerald-300 whitespace-nowrap";
 
   if (job.findings.length === 0) {
     return <p className="text-sm text-zinc-500">Секретов не найдено — проверьте настройки детекторов или источник изображений.</p>;
@@ -38,10 +93,13 @@ export function FindingsTable({ job }: { job: Job }) {
             Все ({job.findings.length})
           </TabsTrigger>
           <TabsTrigger value="keys" className="data-[state=active]:text-emerald-400">
-            Ключи ({job.findings.filter((f) => !isSeedType(f.type)).length})
+            Ключи ({counts.keys})
           </TabsTrigger>
           <TabsTrigger value="seeds" className="data-[state=active]:text-emerald-400">
-            Сид-фразы ({job.findings.filter((f) => isSeedType(f.type)).length})
+            Сид-фразы ({counts.seeds})
+          </TabsTrigger>
+          <TabsTrigger value="addresses" className="data-[state=active]:text-emerald-400">
+            Адреса ({counts.addresses})
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -52,31 +110,25 @@ export function FindingsTable({ job }: { job: Job }) {
             <TableRow className="border-zinc-800 hover:bg-zinc-900">
               <TableHead className="w-10 text-zinc-400">#</TableHead>
               <TableHead className="text-zinc-400">Тип</TableHead>
-              <TableHead className="text-zinc-400">Значение / адрес</TableHead>
+              <TableHead className="text-zinc-400">Значение / адреса</TableHead>
               <TableHead className="hidden text-zinc-400 md:table-cell">Источник</TableHead>
               <TableHead className="w-24 text-right text-zinc-400">Статус</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((f) => (
+            {rows.map((f: Finding) => (
               <TableRow key={f.id} className="border-zinc-800/70 hover:bg-zinc-900/60">
                 <TableCell className="font-mono text-xs text-zinc-500">{f.id}</TableCell>
                 <TableCell>
-                  <Badge
-                    variant="outline"
-                    className={
-                      isSeedType(f.type)
-                        ? "border-amber-400/40 bg-amber-400/10 text-amber-300 whitespace-nowrap"
-                        : "border-emerald-400/40 bg-emerald-400/10 text-emerald-300 whitespace-nowrap"
-                    }
-                  >
+                  <Badge variant="outline" className={badgeClass(f.type)}>
                     {typeLabel(f.type)}
                   </Badge>
                 </TableCell>
                 <TableCell className="max-w-[420px] space-y-1 py-2">
                   <CopyValue value={f.value} />
-                  {f.address && <CopyValue value={f.address} label="адрес" />}
+                  {f.address && f.address !== f.value && <CopyValue value={f.address} label="адрес" />}
                   {f.address_uncompressed && <CopyValue value={f.address_uncompressed} label="адрес*" />}
+                  {f.addresses && <AddressRows addresses={f.addresses} />}
                 </TableCell>
                 <TableCell className="hidden font-mono text-xs text-zinc-500 md:table-cell">
                   <span title={f.image}>{f.image}</span>
@@ -92,6 +144,10 @@ export function FindingsTable({ job }: { job: Job }) {
                       }
                     >
                       {f.valid_checksum ? "checksum OK" : "checksum FAIL"}
+                    </Badge>
+                  ) : isAddressType(f.type) ? (
+                    <Badge variant="outline" className="border-sky-400/40 text-sky-300">
+                      {f.detail?.includes("без контрольной суммы") ? "вероятный" : "checksum OK"}
                     </Badge>
                   ) : (
                     <Badge variant="outline" className="border-zinc-600 text-zinc-400">

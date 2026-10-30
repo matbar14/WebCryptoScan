@@ -17,7 +17,8 @@ export type FindingType =
   | "wif_uncompressed"
   | "mini_private_key"
   | "hex_private_key"
-  | `bip39_seed_phrase_${number}`;
+  | `bip39_seed_phrase_${number}`
+  | `address_${string}`;
 
 export interface Finding {
   id: number;
@@ -27,6 +28,7 @@ export interface Finding {
   value: string;
   address?: string;
   address_uncompressed?: string;
+  addresses?: Record<string, string>;
   wif?: string;
   valid_checksum?: boolean;
   word_count?: number;
@@ -84,6 +86,7 @@ export interface ScanOptions {
   detect_seed: boolean;
   detect_seedqr: boolean;
   detect_electrum: boolean;
+  detect_addresses: boolean;
 }
 
 export const DEFAULT_OPTIONS: ScanOptions = {
@@ -94,6 +97,7 @@ export const DEFAULT_OPTIONS: ScanOptions = {
   detect_seed: true,
   detect_seedqr: true,
   detect_electrum: true,
+  detect_addresses: true,
 };
 
 export interface JobSummary {
@@ -201,6 +205,46 @@ export const TYPE_LABELS: Record<string, string> = {
   wif_uncompressed: "WIF (несжатый)",
   mini_private_key: "Mini-ключ",
   hex_private_key: "Hex-ключ",
+  address_btc_p2pkh: "Адрес BTC (Legacy)",
+  address_btc_p2sh: "Адрес BTC (P2SH)",
+  address_btc_segwit: "Адрес BTC (SegWit)",
+  address_btc_taproot: "Адрес BTC (Taproot)",
+  address_ltc_p2pkh: "Адрес LTC",
+  address_ltc_p2sh: "Адрес LTC (P2SH)",
+  address_ltc_segwit: "Адрес LTC (SegWit)",
+  address_ltc_taproot: "Адрес LTC (Taproot)",
+  address_doge: "Адрес DOGE",
+  address_dash: "Адрес DASH",
+  address_dash_p2sh: "Адрес DASH (P2SH)",
+  address_eth: "Адрес ETH",
+  address_bch_cashaddr: "Адрес BCH (CashAddr)",
+  address_xrp: "Адрес XRP",
+  address_trx: "Адрес TRX",
+  address_sol: "Адрес SOL",
+};
+
+// порядок отображения адресов, выведенных из одного ключа/сида
+export const ADDRESS_ORDER = [
+  "btc_legacy",
+  "btc_segwit",
+  "btc_taproot",
+  "eth",
+  "ltc",
+  "ltc_segwit",
+  "doge",
+  "dash",
+] as const;
+
+export const ADDRESS_KEY_LABELS: Record<string, string> = {
+  btc_legacy: "BTC Legacy",
+  btc_legacy_uncompressed: "BTC Legacy (uncompressed)",
+  btc_segwit: "BTC SegWit",
+  btc_taproot: "BTC Taproot",
+  ltc: "LTC",
+  ltc_segwit: "LTC SegWit",
+  doge: "DOGE",
+  dash: "DASH",
+  eth: "ETH",
 };
 
 export function typeLabel(type: string): string {
@@ -219,12 +263,20 @@ export function isSeedType(type: string): boolean {
   return type.startsWith("bip39") || type.startsWith("seedqr") || type.startsWith("electrum");
 }
 
+export function isAddressType(type: string): boolean {
+  return type.startsWith("address_");
+}
+
+export function isKeyType(type: string): boolean {
+  return !isSeedType(type) && !isAddressType(type);
+}
+
 export function imageUrl(jobId: string, name: string, annotated = false): string {
   // превью с рамками сохраняются бэкендом в JPEG
   const finalName = annotated ? `${name.replace(/\.[^.]+$/, "")}.jpg` : name;
   return apiUrl(`jobs/${jobId}/${annotated ? "annotated" : "images"}/${encodeURIComponent(finalName)}`);
 }
 
-export function reportUrl(jobId: string, fmt: "txt" | "csv" | "json" | "seeds"): string {
+export function reportUrl(jobId: string, fmt: "txt" | "csv" | "json" | "seeds" | "addresses"): string {
   return apiUrl(`jobs/${jobId}/report?fmt=${fmt}`);
 }

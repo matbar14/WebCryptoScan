@@ -36,6 +36,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from engine.crawler import ENGINE_NAMES, IMAGE_EXTS, PRESETS, collect_image_paths, crawl_images
 from engine.decoder import decode_image, open_image
 from engine.detectors import analyze_bytes, analyze_text, get_bip39
+from engine.addresses import attach_addresses
 from engine.reports import write_reports
 from engine.sitespider import parse_site
 from PIL import Image
@@ -67,6 +68,7 @@ DEFAULT_OPTIONS = {
     "detect_seed": True,
     "detect_seedqr": True,
     "detect_electrum": True,
+    "detect_addresses": True,
 }
 
 
@@ -212,6 +214,10 @@ def _process_image(job: dict, image_path: Path) -> None:
                 bbox=r.bbox,
             )
             findings.append(f)
+
+    if options.get("detect_addresses", True):
+        # мультивалютность: вывод адресов для ключей и валидных сидов
+        attach_addresses(findings)
 
     if results:
         job["stats"]["qr_codes"] += len(results)
@@ -470,11 +476,12 @@ def job_report(job_id: str, fmt: str = "json"):
     names = {
         "txt": ("keylist.txt", "text/plain; charset=utf-8"),
         "seeds": ("seedlist.txt", "text/plain; charset=utf-8"),
+        "addresses": ("addresses.txt", "text/plain; charset=utf-8"),
         "json": ("scan_report.json", "application/json"),
         "csv": ("scan_report.csv", "text/csv; charset=utf-8"),
     }
     if fmt not in names:
-        raise HTTPException(status_code=400, detail="fmt: txt | seeds | json | csv")
+        raise HTTPException(status_code=400, detail="fmt: txt | seeds | addresses | json | csv")
     fname, media = names[fmt]
     p = _safe_file(job_id, "", fname)
     return FileResponse(p, media_type=media, filename=fname)

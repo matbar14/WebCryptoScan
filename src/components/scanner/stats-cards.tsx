@@ -1,11 +1,27 @@
 "use client";
 
-import { Images, QrCode, KeyRound, Fingerprint, ScanLine } from "lucide-react";
+import { Images, QrCode, KeyRound, Fingerprint, ScanLine, Wallet } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import type { Job } from "@/lib/scanner-api";
+import { isAddressType, isKeyType, type Job } from "@/lib/scanner-api";
 
 export function StatsCards({ job, className }: { job: Job | null; className?: string }) {
+  const keysCount =
+    job === null
+      ? 0
+      : Object.entries(job.stats.by_type)
+          .filter(([t]) => isKeyType(t))
+          .reduce((acc, [, n]) => acc + n, 0);
+
+  // адреса: найденные в QR + выведенные из ключей/сидов
+  const addressesCount =
+    job === null
+      ? 0
+      : Object.entries(job.stats.by_type)
+          .filter(([t]) => isAddressType(t))
+          .reduce((acc, [, n]) => acc + n, 0) +
+        job.findings.reduce((acc, f) => acc + Object.keys(f.addresses ?? {}).length, 0);
+
   const items = [
     {
       label: "Изображений",
@@ -21,12 +37,7 @@ export function StatsCards({ job, className }: { job: Job | null; className?: st
     },
     {
       label: "Приватных ключей",
-      value:
-        job === null
-          ? 0
-          : Object.entries(job.stats.by_type)
-              .filter(([t]) => !t.startsWith("bip39"))
-              .reduce((acc, [, n]) => acc + n, 0),
+      value: keysCount,
       icon: <KeyRound className="h-4 w-4" aria-hidden />,
       color: "text-emerald-400",
     },
@@ -36,10 +47,16 @@ export function StatsCards({ job, className }: { job: Job | null; className?: st
       icon: <Fingerprint className="h-4 w-4" aria-hidden />,
       color: "text-amber-300",
     },
+    {
+      label: "Адресов",
+      value: addressesCount,
+      icon: <Wallet className="h-4 w-4" aria-hidden />,
+      color: "text-sky-300",
+    },
   ];
 
   return (
-    <div className={cn("grid grid-cols-2 gap-3 lg:grid-cols-4", className)}>
+    <div className={cn("grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5", className)}>
       {items.map((it) => (
         <Card key={it.label} className="border-zinc-800 bg-zinc-900/80">
           <CardContent className="flex items-center gap-3 p-4">

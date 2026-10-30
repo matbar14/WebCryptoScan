@@ -1,15 +1,16 @@
 "use client";
 
-import { FileDown, FileJson, FileSpreadsheet, FileText, ListChecks } from "lucide-react";
+import { FileDown, FileJson, FileSpreadsheet, FileText, ListChecks, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { reportUrl, type Job } from "@/lib/scanner-api";
 
 export function ReportButtons({ job }: { job: Job }) {
   if (job.status !== "done") return null;
 
-  const btns: { fmt: "txt" | "seeds" | "csv" | "json"; label: string; icon: React.ReactNode }[] = [
+  const btns: { fmt: "txt" | "seeds" | "addresses" | "csv" | "json"; label: string; icon: React.ReactNode }[] = [
     { fmt: "txt", label: "keylist.txt", icon: <FileText className="h-4 w-4" aria-hidden /> },
     { fmt: "seeds", label: "seedlist.txt", icon: <ListChecks className="h-4 w-4" aria-hidden /> },
+    { fmt: "addresses", label: "addresses.txt", icon: <Wallet className="h-4 w-4" aria-hidden /> },
     { fmt: "csv", label: "scan_report.csv", icon: <FileSpreadsheet className="h-4 w-4" aria-hidden /> },
     { fmt: "json", label: "scan_report.json", icon: <FileJson className="h-4 w-4" aria-hidden /> },
   ];

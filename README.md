@@ -18,8 +18,9 @@
 | `zbarlight` (мёртв, не собирается на новых Python) | Каскад: **pyzbar → WeChatQRCode (CV-модель) → OpenCV QRCodeDetector** |
 | Один проход по исходной картинке | Препроцессинг: масштабирование, **CLAHE**, **бинаризация Отсу**, адаптивный порог — до 5 попыток на изображение |
 | Поиск только WIF-ключей по регулярокам | WIF (compressed/uncompressed), **mini-ключи Casascius**, **hex-ключи**, **BIP39 сид-фразы (12/15/18/21/24)** с проверкой контрольной суммы, **SeedQR (Compact + Standard)**, **Electrum старого формата (1626 слов)** |
-| `requests.get(blockchain.info)` — падает без retry | **Полностью офлайн**: Base58Check, префикс сети, secp256k1, вывод P2PKH-адреса |
-| `keylist.txt` + `sort | uniq` | **keylist.txt, seedlist.txt, scan_report.json, scan_report.csv** + веб-интерфейс с галереей |
+| `requests.get(blockchain.info)` — падает без retry | **Полностью офлайн**: Base58Check, bech32/bech32m, CashAddr, EIP-55, secp256k1 (свой BIP32-дериватор) |
+| Только Bitcoin P2PKH-адрес | **Мультивалютность**: **BTC (Legacy/P2SH/SegWit/Taproot), ETH (EIP-55), LTC, DOGE, DASH, BCH (CashAddr), XRP, TRX, SOL** — детект в QR + вывод адресов из ключей и сидов |
+| `keylist.txt` + `sort | uniq` | **keylist.txt, seedlist.txt, addresses.txt, scan_report.json, scan_report.csv** + веб-интерфейс с галереей |
 | Краулер на 3 поисковика одной пачкой | **9 поисковых систем** с пресетами и отчётом по каждой, плюс **парсер сайтов** с фолбэком на Wayback Machine |
 | Зависимости-пины 2022 года | Python 3.10+, актуальные версии, всё запускается одной командой |
 
@@ -29,8 +30,10 @@
 Браузер ── Caddy (XTransformPort) ──► Next.js 16 (:3000)  — интерфейс на русском
                                  └──► Python-сервис (:3031) — движок сканера
                                        ├─ engine/decoder.py   каскад декодирования
-                                       ├─ engine/detectors.py WIF / mini / hex / BIP39 / SeedQR / Electrum
+                                       ├─ engine/detectors.py WIF / mini / hex / BIP39 / SeedQR / Electrum / адреса
                                        ├─ engine/bitcoin.py   офлайн-валидация ключей
+                                       ├─ engine/addresses.py мультивалютные адреса: детект + деривация
+                                       ├─ engine/crypto.py    secp256k1, BIP32, bech32/bech32m, CashAddr, EIP-55
                                        ├─ engine/crawler.py   9 поисковых систем + пресеты
                                        ├─ engine/sitespider.py парсер сайтов (+ Wayback)
                                        ├─ engine/reports.py   TXT / JSON / CSV
@@ -75,12 +78,20 @@ python3 mini-services/scanner-service/server.py   # порт 3031
   часто блокируются, Baidu и 360 работают стабильно. Скачивание — с
   md5-дедупликацией между движками и проверкой формата/размера.
 - **Настройки детекторов**: независимые переключатели WIF / BIP39 / **SeedQR
-  (Compact + Standard)** / **Electrum (старый формат)** / mini / hex,
-  тумблер улучшения изображений.
+  (Compact + Standard)** / **Electrum (старый формат)** / mini / hex /
+  **«Адреса и мультивалютность»**, тумблер улучшения изображений.
+- **Мультивалютность**: адреса в QR распознаются офлайн с проверкой контрольных
+  сумм (Base58Check, bech32/bech32m, CashAddr, EIP-55, алфавит Ripple). Для
+  каждого найденного ключа (WIF/mini/hex) выводятся адреса **BTC (Legacy
+  compressed/uncompressed, Taproot), LTC, DOGE, DASH, ETH**; для валидных
+  BIP39/SeedQR-фраз — стандартные адреса по путям BIP44/BIP84/BIP86: BTC
+  Legacy / SegWit / Taproot, LTC, LTC SegWit, DOGE, DASH, ETH. В таблице
+  находок адреса свёрнуты («ещё N сетей…»), есть отдельный фильтр «Адреса».
 - **Результаты**: прогресс в реальном времени, счётчики, таблица находок
   с копированием значений и адресов, галерея изображений с рамками вокруг QR
   и деталями по клику, история сканирований.
 - **Отчёты**: `keylist.txt` (как в оригинале), `seedlist.txt`,
+  `addresses.txt` (мультивалютные адреса с указанием источника),
   `scan_report.json`, `scan_report.csv`.
 
 ## API Python-сервиса (порт 3031)
@@ -96,7 +107,7 @@ python3 mini-services/scanner-service/server.py   # порт 3031
 | GET | `/api/jobs` | список джоб |
 | GET | `/api/jobs/{id}` | статус, прогресс, статистика, находки |
 | DELETE | `/api/jobs/{id}` | удалить джобу |
-| GET | `/api/jobs/{id}/report?fmt=txt\|seeds\|csv\|json` | отчёты |
+| GET | `/api/jobs/{id}/report?fmt=txt\|seeds\|addresses\|csv\|json` | отчёты |
 | GET | `/api/jobs/{id}/images/{name}` · `/annotated/{name}` | изображения |
 
 ## Валидация (офлайн)
@@ -108,6 +119,14 @@ python3 mini-services/scanner-service/server.py   # порт 3031
 - **BIP39**: все слова из официального словаря (2048), пересчёт
   entropy/checksum для длин 12/15/18/21/24. Фразы с битой контрольной
   суммой помечаются `checksum FAIL`.
+- **Адреса (мультивалютность)**: Base58Check с версиями BTC/LTC/DOGE/DASH/TRX,
+  алфавит Ripple для XRP, bech32/bech32m (BIP173/350) для bc1q/bc1p/ltc1,
+  CashAddr-полином для BCH, EIP-55 (keccak-256) для ETH. SOL — эвристика
+  43–44 символов Base58 без checksum (помечается «вероятный»). Деривация из
+  ключей и сидов — собственный secp256k1 + BIP32 (без внешних зависимостей),
+  пути BIP44/84/86. Все проверки выполняются офлайн.
+- Тесты: `python3 tools/test_addresses.py` — известные векторы (privkey=1,
+  BIP39 «abandon ×11 about», EIP-55, BIP173/350, CashAddr).
 
 ## Кредиты
 

@@ -23,6 +23,7 @@ from .bitcoin import (
     validate_mini_key,
     validate_wif,
 )
+from .addresses import detect_addresses_in_text
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 WORDLIST_PATH = DATA_DIR / "bip39_english.txt"
@@ -262,6 +263,10 @@ def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
                 })
             # Современные сиды Electrum (12 слов из 2048-словаря) неотличимы по словарю
             # от BIP39: их ловит bip39.scan_text с checksum=FAIL — см. подсказку в detail.
+
+    if options.get("detect_addresses", True):
+        for f in detect_addresses_in_text(text):
+            push(f)
 
     return results
 

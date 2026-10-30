@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "MrRobotQR 2.0 — сканер QR-кодов: ключи и сид-фразы",
   description:
-    "Модернизированный веб-сканер MrRobotQR: каскадное декодирование QR-кодов (pyzbar, WeChatQRCode, OpenCV), офлайн-валидация WIF-ключей Bitcoin и BIP39 сид-фраз, отчёты TXT/JSON/CSV.",
+    "Модернизированный веб-сканер MrRobotQR: каскадное декодирование QR-кодов (pyzbar, WeChatQRCode, OpenCV), офлайн-валидация приватных ключей, BIP39 сид-фраз и мультивалютных адресов (BTC, ETH, LTC, DOGE, DASH, BCH, XRP, TRX, SOL), отчёты TXT/JSON/CSV.",
   keywords: ["MrRobotQR", "QR", "Bitcoin", "BIP39", "seed phrase", "WIF", "security research"],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",

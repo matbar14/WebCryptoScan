@@ -175,7 +175,7 @@ export default function Home() {
               MrRobotQR <span className="text-emerald-400">2.0</span>
             </h1>
             <p className="hidden text-xs text-zinc-500 sm:block">
-              Сканер QR-кодов: приватные ключи Bitcoin и BIP39 сид-фразы · оффлайн-валидация
+              Ключи, сид-фразы и адреса: BTC, ETH, LTC, DOGE, DASH, BCH, XRP, TRX, SOL · оффлайн-валидация
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
