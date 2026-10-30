@@ -14,6 +14,18 @@ import { UploadZone } from "./upload-zone";
 
 export type SourceTab = "upload" | "folder" | "crawl";
 
+const ENGINE_LIST: { id: string; label: string; hint: string }[] = [
+  { id: "baidu", label: "Baidu", hint: "работает из дата-центров" },
+  { id: "so360", label: "360 Поиск", hint: "работает из дата-центров" },
+  { id: "duckduckgo", label: "DuckDuckGo", hint: "на локальной машине" },
+  { id: "wikimedia", label: "Wikimedia", hint: "свободные изображения" },
+  { id: "google", label: "Google", hint: "на локальной машине" },
+  { id: "bing", label: "Bing", hint: "на локальной машине" },
+  { id: "sogou", label: "Sogou", hint: "на локальной машине" },
+  { id: "yandex", label: "Яндекс", hint: "часто капча" },
+  { id: "openverse", label: "Openverse", hint: "CC-изображения" },
+];
+
 export function SourcePanel({
   active,
   onActiveChange,
@@ -33,7 +45,7 @@ export function SourcePanel({
   const [keyword, setKeyword] = useState("");
   const [preset, setPreset] = useState("");
   const [presets, setPresets] = useState<Record<string, Preset>>({});
-  const [engines, setEngines] = useState<string[]>(["google", "bing", "baidu"]);
+  const [engines, setEngines] = useState<string[]>(["baidu", "so360", "duckduckgo", "wikimedia"]);
   const [maxNum, setMaxNum] = useState(30);
 
   useEffect(() => {
@@ -140,15 +152,22 @@ export function SourcePanel({
         </div>
 
         <div className="space-y-2">
-          <Label className="text-zinc-300">Поисковые системы</Label>
-          <div className="flex gap-4">
-            {(["google", "bing", "baidu"] as const).map((e) => (
-              <label key={e} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                <Checkbox checked={engines.includes(e)} onCheckedChange={() => toggleEngine(e)} disabled={busy} />
-                {e}
+          <Label className="text-zinc-300">Поисковые системы ({engines.length}/9)</Label>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {ENGINE_LIST.map((eng) => (
+              <label key={eng.id} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                <Checkbox checked={engines.includes(eng.id)} onCheckedChange={() => toggleEngine(eng.id)} disabled={busy} />
+                <span>
+                  {eng.label}
+                  <span className="ml-1 text-[10px] text-zinc-600">{eng.hint}</span>
+                </span>
               </label>
             ))}
           </div>
+          <p className="text-xs text-zinc-500">
+            Baidu и 360 стабильно работают с серверных IP; Google, Bing, Sogou и другие часто
+            блокируют дата-центры — включайте их при локальном запуске.
+          </p>
         </div>
 
         <div className="space-y-2">

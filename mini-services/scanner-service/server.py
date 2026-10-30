@@ -33,7 +33,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
-from engine.crawler import IMAGE_EXTS, PRESETS, collect_image_paths, crawl_images
+from engine.crawler import ENGINE_NAMES, IMAGE_EXTS, PRESETS, collect_image_paths, crawl_images
 from engine.decoder import decode_image, open_image
 from engine.detectors import analyze_text, get_bip39
 from engine.reports import write_reports
@@ -365,10 +365,10 @@ def scan_folder(body: dict):
 
 @app.post("/api/scan/crawl")
 def scan_crawl(body: dict):
-    engines = body.get("engines") or ["bing"]
+    engines = body.get("engines") or ["baidu", "so360"]
     if not isinstance(engines, list):
         raise HTTPException(status_code=400, detail="engines: ожидался список")
-    engines = [e for e in engines if e in ("google", "bing", "baidu")]
+    engines = [e for e in engines if e in ENGINE_NAMES]
     if not engines:
         raise HTTPException(status_code=400, detail="Не выбрана ни одна поисковая система")
 
