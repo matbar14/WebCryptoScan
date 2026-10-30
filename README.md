@@ -82,12 +82,26 @@ sudo apt install libzbar0 poppler-utils   # pyzbar и растеризация P
 python3 -m pip install -r mini-services/scanner-service/requirements.txt
 
 # 3. Фронтенд (Next.js 16 + TypeScript)
-npm install         # или bun install
+npm ci              # установка строго по package-lock.json (фиксированные версии)
 npm run dev         # http://localhost:3000
 
 # 4. (опционально) Python-сервис отдельно — иначе он стартует сам
 python3 mini-services/scanner-service/server.py   # порт 3031
 ```
+
+> **Если `npm run dev` падает с `Cannot find native binding` / `Cannot find
+> module '@tailwindcss/oxide-linux-x64-gnu'`** — это известный баг npm с
+> optional-зависимостями (npm/cli#4828): нативный бинарник не установился.
+> Лечится полной переустановкой:
+>
+> ```bash
+> rm -rf node_modules .next package-lock.json
+> npm install
+> ```
+>
+> Если после `git pull` проблема повторяется — убедитесь, что Node.js 20.9+
+> (`node -v`) и что в каталоге нет чужого `node_modules`, скопированного с
+> другой ОС.
 
 ## Интерфейс
 
