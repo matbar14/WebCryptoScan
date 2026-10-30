@@ -1,0 +1,109 @@
+"use client";
+
+import { useMemo } from "react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useState } from "react";
+import { isSeedType, typeLabel, type Job } from "@/lib/scanner-api";
+import { CopyValue } from "./copy-value";
+
+type Filter = "all" | "keys" | "seeds";
+
+export function FindingsTable({ job }: { job: Job }) {
+  const [filter, setFilter] = useState<Filter>("all");
+
+  const rows = useMemo(() => {
+    if (filter === "keys") return job.findings.filter((f) => !isSeedType(f.type));
+    if (filter === "seeds") return job.findings.filter((f) => isSeedType(f.type));
+    return job.findings;
+  }, [job.findings, filter]);
+
+  if (job.findings.length === 0) {
+    return <p className="text-sm text-zinc-500">Секретов не найдено — проверьте настройки детекторов или источник изображений.</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
+        <TabsList className="bg-zinc-900 border border-zinc-800">
+          <TabsTrigger value="all" className="data-[state=active]:text-emerald-400">
+            Все ({job.findings.length})
+          </TabsTrigger>
+          <TabsTrigger value="keys" className="data-[state=active]:text-emerald-400">
+            Ключи ({job.findings.filter((f) => !isSeedType(f.type)).length})
+          </TabsTrigger>
+          <TabsTrigger value="seeds" className="data-[state=active]:text-emerald-400">
+            Сид-фразы ({job.findings.filter((f) => isSeedType(f.type)).length})
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      <div className="max-h-96 overflow-y-auto rounded-lg border border-zinc-800">
+        <Table>
+          <TableHeader className="sticky top-0 bg-zinc-900">
+            <TableRow className="border-zinc-800 hover:bg-zinc-900">
+              <TableHead className="w-10 text-zinc-400">#</TableHead>
+              <TableHead className="text-zinc-400">Тип</TableHead>
+              <TableHead className="text-zinc-400">Значение / адрес</TableHead>
+              <TableHead className="hidden text-zinc-400 md:table-cell">Источник</TableHead>
+              <TableHead className="w-24 text-right text-zinc-400">Статус</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((f) => (
+              <TableRow key={f.id} className="border-zinc-800/70 hover:bg-zinc-900/60">
+                <TableCell className="font-mono text-xs text-zinc-500">{f.id}</TableCell>
+                <TableCell>
+                  <Badge
+                    variant="outline"
+                    className={
+                      isSeedType(f.type)
+                        ? "border-amber-400/40 bg-amber-400/10 text-amber-300 whitespace-nowrap"
+                        : "border-emerald-400/40 bg-emerald-400/10 text-emerald-300 whitespace-nowrap"
+                    }
+                  >
+                    {typeLabel(f.type)}
+                  </Badge>
+                </TableCell>
+                <TableCell className="max-w-[420px] space-y-1 py-2">
+                  <CopyValue value={f.value} />
+                  {f.address && <CopyValue value={f.address} label="адрес" />}
+                  {f.address_uncompressed && <CopyValue value={f.address_uncompressed} label="адрес*" />}
+                </TableCell>
+                <TableCell className="hidden font-mono text-xs text-zinc-500 md:table-cell">
+                  <span title={f.image}>{f.image}</span>
+                </TableCell>
+                <TableCell className="text-right">
+                  {isSeedType(f.type) ? (
+                    <Badge
+                      variant="outline"
+                      className={
+                        f.valid_checksum
+                          ? "border-emerald-400/40 text-emerald-400"
+                          : "border-rose-400/40 text-rose-400"
+                      }
+                    >
+                      {f.valid_checksum ? "checksum OK" : "checksum FAIL"}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-zinc-600 text-zinc-400">
+                      валиден
+                    </Badge>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}

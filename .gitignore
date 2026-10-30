@@ -1,0 +1,30 @@
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- Runtime artifacts (jobs, logs, DB) ---
+mini-services/scanner-service/jobs/
+*.log
+db/*.db
+
+# --- Local test data ---
+testdata/
+
+# --- Secrets / env ---
+.env
+.env.*
+!.env.example
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
