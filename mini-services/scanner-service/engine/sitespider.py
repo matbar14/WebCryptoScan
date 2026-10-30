@@ -29,6 +29,7 @@ from .crawler import (
     _download_images,
     _load_seen_hashes,
 )
+from .textscan import page_visible_text
 
 HTTP_TIMEOUT = 25
 MAX_HTML = 3 * 1024 * 1024          # 3 МБ HTML достаточно
@@ -215,4 +216,10 @@ def parse_site(target_dir, url: str, max_num: int, archive: str = "auto") -> dic
             )
     result["keywords"][target] = {"engines": {"site": info}, "total": saved}
     result["total"] = saved
+    # видимый текст страницы — источник строковых значений для сканера
+    try:
+        result["page_text"] = page_visible_text(html)
+        result["page_url"] = page_url
+    except Exception:  # noqa: BLE001
+        pass
     return result

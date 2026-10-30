@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { typeLabel, imageUrl, isSeedType, type Job } from "@/lib/scanner-api";
+import { typeLabel, imageUrl, isSeedType, isImageName, sourceLabel, type Job } from "@/lib/scanner-api";
 import { CopyValue } from "./copy-value";
 
 function TypeBadge({ type }: { type: string }) {
@@ -25,13 +25,18 @@ function TypeBadge({ type }: { type: string }) {
 
 export function Gallery({ job }: { job: Job }) {
   const qrImages = useMemo(() => {
-    const set = new Set<string>(job.stats.qr_images ?? []);
-    job.findings.forEach((f) => set.add(f.image));
+    const set = new Set<string>();
+    (job.stats.qr_images ?? []).forEach((n) => {
+      if (isImageName(n)) set.add(n);
+    });
+    job.findings.forEach((f) => {
+      if (isImageName(f.image)) set.add(f.image);
+    });
     return Array.from(set);
   }, [job]);
 
   if (qrImages.length === 0) {
-    return <p className="text-sm text-zinc-500">Нет изображений с QR-кодами.</p>;
+    return <p className="text-sm text-zinc-500">Нет изображений с находками — QR и OCR не дали результатов.</p>;
   }
 
   return (
@@ -49,7 +54,7 @@ export function Gallery({ job }: { job: Job }) {
               >
                 <img
                   src={preview}
-                  alt={`QR-код на изображении ${name}`}
+                  alt={`Изображение ${name}`}
                   loading="lazy"
                   className="aspect-square w-full object-contain p-1"
                 />
@@ -58,7 +63,7 @@ export function Gallery({ job }: { job: Job }) {
                   <div className="flex flex-wrap gap-1">
                     {findings.length === 0 ? (
                       <Badge variant="outline" className="border-zinc-600 text-zinc-400">
-                        QR без секретов
+                        Без секретов
                       </Badge>
                     ) : (
                       findings.slice(0, 2).map((f) => <TypeBadge key={f.id} type={f.type} />)
@@ -76,7 +81,7 @@ export function Gallery({ job }: { job: Job }) {
               <DialogHeader>
                 <DialogTitle className="font-mono text-sm">{name}</DialogTitle>
                 <DialogDescription className="text-zinc-400">
-                  QR-кодов: {job.stats.qr_images?.filter((n) => n === name).length || 1} · находок: {findings.length}
+                  Источников находок: {new Set(findings.map((f) => f.source ?? "qr")).size} · находок: {findings.length}
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -87,13 +92,13 @@ export function Gallery({ job }: { job: Job }) {
                 />
                 <ScrollArea className="max-h-80 rounded-md border border-zinc-800">
                   <div className="space-y-3 p-3">
-                    {findings.length === 0 && <p className="text-sm text-zinc-500">Секретов в QR-коде не обнаружено.</p>}
+                    {findings.length === 0 && <p className="text-sm text-zinc-500">Секретов на изображении не обнаружено.</p>}
                     {findings.map((f) => (
                       <div key={f.id} className="space-y-1.5 rounded-md border border-zinc-800 bg-zinc-950/60 p-2.5">
                         <div className="flex items-center justify-between gap-2">
                           <TypeBadge type={f.type} />
                           <span className="font-mono text-[10px] text-zinc-600">
-                            {f.engine} / {f.variant}
+                            {sourceLabel(f.source)} · {f.engine}/{f.variant}
                           </span>
                         </div>
                         <CopyValue value={f.value} label={isSeedType(f.type) ? "Фраза" : "Значение"} />

@@ -34,6 +34,7 @@ COIN_BY_ADDR_KEY = {
 CSV_FIELDS = [
     "id",
     "image",
+    "source",
     "qr_index",
     "type",
     "value",
@@ -44,6 +45,7 @@ CSV_FIELDS = [
     "word_count",
     "engine",
     "variant",
+    "source_detail",
     "detail",
 ]
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Coins, KeyRound, ListChecks, ScanLine, Shapes, SlidersHorizontal, TextCursorInput } from "lucide-react";
+import { Coins, FileText, KeyRound, ListChecks, ScanLine, Shapes, SlidersHorizontal, TextCursorInput } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { ScanOptions } from "@/lib/scanner-api";
@@ -47,6 +47,18 @@ const ITEMS: { key: keyof ScanOptions; label: string; hint: string; icon: React.
     label: "Адреса и мультивалютность",
     hint: "BTC, ETH, LTC, DOGE, DASH, BCH, XRP, TRX, SOL + адреса из ключей/сидов",
     icon: <Coins className="h-3.5 w-3.5" aria-hidden />,
+  },
+  {
+    key: "ocr_fallback",
+    label: "OCR обычных фото",
+    hint: "Tesseract: текст, ключи и фразы на фото без QR",
+    icon: <ScanLine className="h-3.5 w-3.5" aria-hidden />,
+  },
+  {
+    key: "scan_strings",
+    label: "Строковые значения",
+    hint: "EXIF, txt/json/логи, строки из файлов, текст страниц",
+    icon: <FileText className="h-3.5 w-3.5" aria-hidden />,
   },
   {
     key: "preprocess",

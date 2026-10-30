@@ -18,6 +18,7 @@ import {
   isAddressType,
   isKeyType,
   isSeedType,
+  sourceLabel,
   typeLabel,
   type Finding,
   type Job,
@@ -131,7 +132,18 @@ export function FindingsTable({ job }: { job: Job }) {
                   {f.addresses && <AddressRows addresses={f.addresses} />}
                 </TableCell>
                 <TableCell className="hidden font-mono text-xs text-zinc-500 md:table-cell">
-                  <span title={f.image}>{f.image}</span>
+                  <div className="space-y-1">
+                    <span title={f.image}>{f.image}</span>
+                    {(f.source && f.source !== "qr") || f.source_detail ? (
+                      <Badge
+                        variant="outline"
+                        className="block w-fit border-violet-400/40 bg-violet-400/10 text-violet-300 whitespace-nowrap"
+                        title={f.source_detail}
+                      >
+                        {sourceLabel(f.source)}
+                      </Badge>
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell className="text-right">
                   {isSeedType(f.type) ? (

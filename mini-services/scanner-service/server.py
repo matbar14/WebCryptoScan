@@ -39,6 +39,18 @@ from engine.detectors import analyze_bytes, analyze_text, get_bip39
 from engine.addresses import attach_addresses
 from engine.reports import write_reports
 from engine.sitespider import parse_site
+from engine.textscan import (
+    boxes_for_values,
+    collect_document_paths,
+    compact_lines_text,
+    exif_text_from_path,
+    file_text_chunks,
+    looks_like_image,
+    ocr_base58_repair,
+    ocr_image_lines,
+    ocr_normalize,
+    page_visible_text,
+)
 from PIL import Image
 import cv2
 import numpy as np
@@ -69,6 +81,8 @@ DEFAULT_OPTIONS = {
     "detect_seedqr": True,
     "detect_electrum": True,
     "detect_addresses": True,
+    "ocr_fallback": True,    # OCR обычных фото (Tesseract), когда QR не найден
+    "scan_strings": True,    # строковые значения: EXIF, текстовые файлы, строки, страницы
 }
 
 
@@ -90,6 +104,8 @@ def _new_stats() -> dict:
         "by_type": {},
         "valid_seeds": 0,
         "invalid_seeds": 0,
+        "ocr_images": 0,
+        "text_files": 0,
     }
 
 
@@ -159,19 +175,19 @@ def _safe_file(job_id: str, sub: str, name: str) -> Path:
 
 # --- Рабочий поток джобы --------------------------------------------------------
 
-def _annotate(job_id: str, image_path: Path, results: list) -> str:
-    """Рисует рамки найденных QR на уменьшенной копии; возвращает имя файла превью."""
+def _render_preview(job_id: str, image_path: Path, boxes: list[list[int]], tags: list[str]) -> str:
+    """Рисует рамки (QR или OCR-строки) на уменьшенной копии; возвращает имя файла превью."""
     img = cv2.imdecode(np.fromfile(str(image_path), dtype=np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         img = cv2.cvtColor(np.array(open_image(str(image_path))), cv2.COLOR_RGB2BGR)
     h, w = img.shape[:2]
     thick = max(2, min(h, w) // 300)
-    for i, r in enumerate(results):
-        x, y, bw, bh = r.bbox
+    for i, bbox in enumerate(boxes):
+        x, y, bw, bh = bbox
         p1 = (max(0, x - 3), max(0, y - 3))
         p2 = (min(w - 1, x + bw + 3), min(h - 1, y + bh + 3))
         cv2.rectangle(img, p1, p2, (52, 211, 153), thick)  # emerald
-        label = f"QR{i + 1}"
+        label = f"{tags[i]}{i + 1}" if i < len(tags) else "QR"
         ty = max(thick * 6, y - 6)
         cv2.putText(img, label, (p1[0], ty), cv2.FONT_HERSHEY_SIMPLEX, max(0.5, min(h, w) / 900), (52, 211, 153), thick)
     scale = min(1.0, 560.0 / max(1, w))
@@ -184,11 +200,20 @@ def _annotate(job_id: str, image_path: Path, results: list) -> str:
     return name
 
 
+def _annotate(job_id: str, image_path: Path, results: list) -> str:
+    """Превью с рамками найденных QR-кодов."""
+    return _render_preview(job_id, image_path, [r.bbox for r in results], ["QR"])
+
+
 def _process_image(job: dict, image_path: Path) -> None:
     options = job["options"]
     try:
         img = open_image(str(image_path))
     except Exception as e:  # noqa: BLE001
+        # не изображение? пробуем как источник строк (если включён scan_strings)
+        if options.get("scan_strings", True) and not looks_like_image(image_path.name):
+            _process_text_file(job, image_path)
+            return
         job["errors"].append({"image": image_path.name, "error": f"не удалось открыть: {e}"})
         job["stats"]["images"] += 1
         return
@@ -201,6 +226,7 @@ def _process_image(job: dict, image_path: Path) -> None:
 
     bip39 = get_bip39()
     findings = []
+    preview_made = False
     for qi, r in enumerate(results):
         detected = analyze_text(r.data, options, bip39)
         if r.raw:
@@ -212,8 +238,71 @@ def _process_image(job: dict, image_path: Path) -> None:
                 engine=r.engine,
                 variant=r.variant,
                 bbox=r.bbox,
+                source="qr",
             )
             findings.append(f)
+
+    # --- EXIF-метаданные: описание/комментарии тоже могут прятать секреты ---
+    if options.get("scan_strings", True):
+        try:
+            exif_text = exif_text_from_path(str(image_path))
+        except Exception:  # noqa: BLE001
+            exif_text = ""
+        if exif_text.strip():
+            for f in analyze_text(exif_text, options, bip39):
+                f.update(
+                    image=image_path.name,
+                    qr_index=0,
+                    engine="text",
+                    variant="exif",
+                    bbox=[0, 0, 0, 0],
+                    source="exif",
+                    source_detail="EXIF-метаданные изображения",
+                )
+                findings.append(f)
+
+    # --- OCR обычных фото: QR не найден -> ищем текст на картинке ---
+    if options.get("ocr_fallback", True) and not results:
+        try:
+            ocr_lines = ocr_image_lines(img)
+        except Exception:  # noqa: BLE001
+            ocr_lines = []
+        if ocr_lines:
+            job["stats"]["ocr_images"] += 1
+            # нормализация под детекторы + вариант со склеенными строками
+            # (tesseract рвёт длинные ключи пробелами, пишет Ox вместо 0x и é вместо e)
+            ocr_text = ocr_normalize("\n".join(ln["text"] for ln in ocr_lines))
+            ocr_text = ocr_text + "\n" + compact_lines_text(ocr_text)
+            ocr_findings = analyze_text(ocr_text, options, bip39)
+            # восстановление base58-токенов после OCR (лишний/битый символ):
+            # WIF-ключи и адреса BTC/LTC/DOGE/DASH/TRX с проверкой Base58Check
+            seen_vals = {f.get("value") for f in ocr_findings}
+            for f in ocr_base58_repair(ocr_text):
+                if f["value"] not in seen_vals:
+                    ocr_findings.append(f)
+            if ocr_findings:
+                boxes = boxes_for_values([f["value"] for f in ocr_findings], ocr_lines)
+                draw: list[list[int]] = []
+                for f in ocr_findings:
+                    bb = boxes.get(f["value"])
+                    if bb:
+                        f["bbox"] = bb
+                        draw.append(bb)
+                    f.update(
+                        image=image_path.name,
+                        qr_index=0,
+                        engine="ocr",
+                        variant=f"psm{ocr_lines[0]['psm']}+psm11",
+                        source="ocr",
+                    )
+                    f.setdefault("source_detail", "распознано Tesseract OCR (eng)")
+                findings.extend(ocr_findings)
+                if draw:
+                    try:
+                        _render_preview(job["id"], image_path, draw, ["OCR"])
+                        preview_made = True
+                    except Exception:
+                        traceback.print_exc()
 
     if options.get("detect_addresses", True):
         # мультивалютность: вывод адресов для ключей и валидных сидов
@@ -225,6 +314,14 @@ def _process_image(job: dict, image_path: Path) -> None:
         qr_images.append(image_path.name)
         try:
             _annotate(job["id"], image_path, results)
+            preview_made = True
+        except Exception:
+            traceback.print_exc()
+
+    if findings and not preview_made:
+        # превью нужно и без QR/OCR (например, только EXIF) — иначе галерея покажет битую картинку
+        try:
+            _render_preview(job["id"], image_path, [], [])
         except Exception:
             traceback.print_exc()
 
@@ -243,7 +340,50 @@ def _process_image(job: dict, image_path: Path) -> None:
     job["stats"]["images"] += 1
 
 
-def _worker(job_id: str, image_paths: list[Path], crawl_params: dict | None) -> None:
+def _process_text_file(job: dict, file_path: Path) -> None:
+    """Строковые значения из не-изображений: txt/json/строки бинарников."""
+    options = job["options"]
+    try:
+        chunks = file_text_chunks(file_path)
+    except Exception as e:  # noqa: BLE001
+        job["errors"].append({"image": file_path.name, "error": f"не удалось прочитать: {e}"})
+        return
+    if not chunks:
+        return
+    bip39 = get_bip39()
+    findings = []
+    for label, text in chunks:
+        for f in analyze_text(text, options, bip39):
+            f.update(
+                image=file_path.name,
+                qr_index=0,
+                engine="text",
+                variant=label,
+                bbox=[0, 0, 0, 0],
+                source="file",
+                source_detail=f"файл: {file_path.name} ({label})",
+            )
+            findings.append(f)
+    if options.get("detect_addresses", True):
+        attach_addresses(findings)
+    for f in findings:
+        t = f["type"]
+        job["stats"]["by_type"][t] = job["stats"]["by_type"].get(t, 0) + 1
+        if t.startswith(("bip39", "seedqr", "electrum")):
+            if f.get("valid_checksum"):
+                job["stats"]["valid_seeds"] += 1
+            else:
+                job["stats"]["invalid_seeds"] += 1
+        fid = len(job["findings"]) + 1
+        f["id"] = fid
+        job["findings"].append(f)
+    job["stats"]["findings"] += len(findings)
+    job["stats"]["text_files"] += 1
+    job["stats"]["images"] += 0  # текстовые файлы не считаем изображениями
+
+
+def _worker(job_id: str, items: list[tuple[Path, str]], crawl_params: dict | None) -> None:
+    """items — пары (путь, тип): 'image' | 'doc'. При crawl_params — сначала скачивание."""
     with LOCK:
         job = JOBS.get(job_id)
     try:
@@ -258,17 +398,54 @@ def _worker(job_id: str, image_paths: list[Path], crawl_params: dict | None) -> 
                 res = crawl_images(JOBS_DIR / job_id / "images", **crawl_params)
             job["crawl"] = res
             image_paths = collect_image_paths(JOBS_DIR / job_id / "images")
+            items = [(p, "image") for p in image_paths]
+
+            # текст страницы (сайт/архив) — тоже источник строковых значений
+            if job["options"].get("scan_strings", True) and crawl_params.get("mode") == "site":
+                page_text = (res.get("page_text") or "").strip()
+                page_url = res.get("page_url") or res.get("label") or "страница"
+                if page_text:
+                    bip39 = get_bip39()
+                    findings = []
+                    for f in analyze_text(page_text, job["options"], bip39):
+                        f.update(
+                            image=page_url,
+                            qr_index=0,
+                            engine="text",
+                            variant="html",
+                            bbox=[0, 0, 0, 0],
+                            source="page",
+                            source_detail="видимый текст страницы",
+                        )
+                        findings.append(f)
+                    if job["options"].get("detect_addresses", True):
+                        attach_addresses(findings)
+                    for f in findings:
+                        t = f["type"]
+                        job["stats"]["by_type"][t] = job["stats"]["by_type"].get(t, 0) + 1
+                        if t.startswith(("bip39", "seedqr", "electrum")):
+                            if f.get("valid_checksum"):
+                                job["stats"]["valid_seeds"] += 1
+                            else:
+                                job["stats"]["invalid_seeds"] += 1
+                        fid = len(job["findings"]) + 1
+                        f["id"] = fid
+                        job["findings"].append(f)
+                    job["stats"]["findings"] += len(findings)
 
         job["status"] = "running"
         job["phase"] = "scan"
-        job["progress"]["total"] = len(image_paths)
+        job["progress"]["total"] = len(items)
         job["progress"]["processed"] = 0
         _save_job(job)
 
-        for i, p in enumerate(image_paths):
-            _process_image(job, p)
+        for i, (p, kind) in enumerate(items):
+            if kind == "image":
+                _process_image(job, p)
+            else:
+                _process_text_file(job, p)
             job["progress"]["processed"] = i + 1
-            if i % 10 == 0 or i == len(image_paths) - 1:
+            if i % 10 == 0 or i == len(items) - 1:
                 _save_job(job)
 
         job["phase"] = "done"
@@ -285,11 +462,14 @@ def _worker(job_id: str, image_paths: list[Path], crawl_params: dict | None) -> 
         _save_job(job)
 
 
-def _start_job(job: dict, image_paths: list[Path], crawl_params: dict | None = None) -> str:
+def _start_job(job: dict, items: list[tuple[Path, str]] | list[Path], crawl_params: dict | None = None) -> str:
     with LOCK:
         JOBS[job["id"]] = job
     _save_job(job)
-    threading.Thread(target=_worker, args=(job["id"], image_paths, crawl_params), daemon=True).start()
+    norm: list[tuple[Path, str]] = [
+        (p, "image") if not isinstance(p, tuple) else p for p in items
+    ]
+    threading.Thread(target=_worker, args=(job["id"], norm, crawl_params), daemon=True).start()
     return job["id"]
 
 
@@ -310,7 +490,15 @@ def health():
         words = len(get_bip39().words)
     except Exception:
         pass
-    return {"status": "ok", "version": VERSION, "engines": engines, "bip39_words": words}
+    ocr = {"available": False, "lang": None}
+    try:
+        import pytesseract
+
+        ocr["available"] = True
+        ocr["lang"] = pytesseract.get_languages() if hasattr(pytesseract, "get_languages") else None
+    except Exception:
+        pass
+    return {"status": "ok", "version": VERSION, "engines": engines, "bip39_words": words, "ocr": ocr}
 
 
 @app.get("/api/presets")
@@ -359,7 +547,11 @@ async def scan_upload(
         saved.append(dst)
     if not saved:
         raise HTTPException(status_code=400, detail="Ни один файл не сохранён")
-    return JSONResponse({"job_id": _start_job(job, saved)})
+    items = [
+        (p, "image" if looks_like_image(p.name) else "doc")
+        for p in saved
+    ]
+    return JSONResponse({"job_id": _start_job(job, items)})
 
 
 @app.post("/api/scan/folder")
@@ -373,10 +565,14 @@ def scan_folder(body: dict):
     opts = _parse_options(json.dumps(body.get("options", {})))
     job = _new_job(label=str(folder), source_type="folder", options=opts)
     paths = collect_image_paths(folder)
-    if not paths:
-        raise HTTPException(status_code=400, detail="В папке нет изображений")
-    _start_job(job, paths)
-    return {"job_id": job["id"], "images": len(paths)}
+    docs: list[Path] = []
+    if opts.get("scan_strings", True):
+        docs = collect_document_paths(folder)
+    items = [(p, "image") for p in paths] + [(p, "doc") for p in docs]
+    if not items:
+        raise HTTPException(status_code=400, detail="В папке нет изображений или текстовых файлов")
+    _start_job(job, items)
+    return {"job_id": job["id"], "images": len(paths), "documents": len(docs)}
 
 
 @app.post("/api/scan/crawl")

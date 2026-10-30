@@ -76,14 +76,18 @@ class Bip39:
     def scan_text(self, text: str) -> list[dict]:
         """Скользящее окно по словам: ищем фразы длины 12..24, все слова из словаря.
 
-        Жадный проход слева направо, при находке окно сдвигается за её конец.
+        Для QR-текста (одна фраза) ведёт себя как раньше. В свободном тексте
+        (OCR, файлы, страницы) метки вроде «seed:» сами могут быть словарными
+        словами, поэтому окна перекрываются: сдвиг на длину фразы делаем
+        только при валидной контрольной сумме, иначе — на кратчайшее
+        совпадение словаря.
         """
         tokens = [unicodedata.normalize("NFKC", t).lower().strip(".,;:!?\"'`*()[]{}") for t in _tokens(text)]
         findings: list[dict] = []
         i = 0
         n = len(tokens)
         while i < n:
-            matched = False
+            jump = 0
             for size in MNEMONIC_LENGTHS:
                 if i + size > n:
                     continue
@@ -104,11 +108,24 @@ class Bip39:
                         "(возможно, это сид Electrum — у него другая контрольная сумма)",
                     }
                 )
-                i += size
-                matched = True
-                break
-            if not matched:
-                i += 1
+                if cs_ok:
+                    jump = size
+                    break
+            i += jump if jump else 1
+
+        # Подавляем «сдвинутые» окна-артефакты: невалидное окно, которое после
+        # отбрасывания 1-3 слов с краёв совпадает с валидной фразой — это метка
+        # перед фразой (например «seed: thank coconut ...»), а не отдельный сид.
+        valid_windows = [tuple(f["value"].split()) for f in findings if f.get("valid_checksum")]
+        if valid_windows:
+            def _artifact(w: tuple[str, ...]) -> bool:
+                for v in valid_windows:
+                    for k in range(1, 4):
+                        rest = len(w) - k
+                        if rest >= 10 and (w[k:] == v[:rest] or w[:rest] == v[len(v) - rest:]):
+                            return True
+                return False
+            findings = [f for f in findings if f.get("valid_checksum") or not _artifact(tuple(f["value"].split()))]
         return findings
 
 

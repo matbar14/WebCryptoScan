@@ -35,6 +35,8 @@ export interface Finding {
   engine: string;
   variant: string;
   bbox: [number, number, number, number];
+  source?: "qr" | "ocr" | "exif" | "file" | "page";
+  source_detail?: string;
   detail?: string;
 }
 
@@ -54,6 +56,8 @@ export interface JobStats {
   valid_seeds: number;
   invalid_seeds: number;
   qr_images?: string[];
+  ocr_images?: number;
+  text_files?: number;
 }
 
 export interface Job {
@@ -87,6 +91,8 @@ export interface ScanOptions {
   detect_seedqr: boolean;
   detect_electrum: boolean;
   detect_addresses: boolean;
+  ocr_fallback: boolean;
+  scan_strings: boolean;
 }
 
 export const DEFAULT_OPTIONS: ScanOptions = {
@@ -98,6 +104,8 @@ export const DEFAULT_OPTIONS: ScanOptions = {
   detect_seedqr: true,
   detect_electrum: true,
   detect_addresses: true,
+  ocr_fallback: true,
+  scan_strings: true,
 };
 
 export interface JobSummary {
@@ -269,6 +277,23 @@ export function isAddressType(type: string): boolean {
 
 export function isKeyType(type: string): boolean {
   return !isSeedType(type) && !isAddressType(type);
+}
+
+export function isImageName(name: string): boolean {
+  return /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i.test(name);
+}
+
+export const SOURCE_LABELS: Record<string, string> = {
+  qr: "QR-код",
+  ocr: "OCR",
+  exif: "EXIF",
+  file: "файл",
+  page: "страница",
+};
+
+export function sourceLabel(source?: string): string {
+  if (!source) return "QR-код";
+  return SOURCE_LABELS[source] ?? source;
 }
 
 export function imageUrl(jobId: string, name: string, annotated = false): string {
