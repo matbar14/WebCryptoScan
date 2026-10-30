@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FolderOpen, Globe, Loader2, Search, Sparkles } from "lucide-react";
+import { FolderOpen, Globe, Link2, Loader2, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,10 +9,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getPresets, type Preset } from "@/lib/scanner-api";
 import { UploadZone } from "./upload-zone";
 
-export type SourceTab = "upload" | "folder" | "crawl";
+export type SourceTab = "upload" | "folder" | "crawl" | "site";
 
 const ENGINE_LIST: { id: string; label: string; hint: string }[] = [
   { id: "baidu", label: "Baidu", hint: "работает из дата-центров" },
@@ -33,6 +34,7 @@ export function SourcePanel({
   onUpload,
   onFolder,
   onCrawl,
+  onSite,
 }: {
   active: SourceTab;
   onActiveChange: (t: SourceTab) => void;
@@ -40,6 +42,7 @@ export function SourcePanel({
   onUpload: (files: File[]) => void;
   onFolder: (path: string) => void;
   onCrawl: (p: { keyword: string; preset: string; engines: string[]; maxNum: number }) => void;
+  onSite: (p: { url: string; archive: "auto" | "yes" | "no"; maxNum: number }) => void;
 }) {
   const [folderPath, setFolderPath] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -47,6 +50,9 @@ export function SourcePanel({
   const [presets, setPresets] = useState<Record<string, Preset>>({});
   const [engines, setEngines] = useState<string[]>(["baidu", "so360", "duckduckgo", "wikimedia"]);
   const [maxNum, setMaxNum] = useState(30);
+  const [siteUrl, setSiteUrl] = useState("");
+  const [siteArchive, setSiteArchive] = useState<"auto" | "yes" | "no">("auto");
+  const [siteMaxNum, setSiteMaxNum] = useState(30);
 
   useEffect(() => {
     getPresets()
@@ -59,7 +65,7 @@ export function SourcePanel({
 
   return (
     <Tabs value={active} onValueChange={(v) => onActiveChange(v as SourceTab)} className="w-full">
-      <TabsList className="grid w-full grid-cols-3 bg-zinc-900 border border-zinc-800">
+      <TabsList className="grid w-full grid-cols-4 bg-zinc-900 border border-zinc-800">
         <TabsTrigger value="upload" className="gap-1.5 data-[state=active]:text-emerald-400">
           <FolderOpen className="h-4 w-4" aria-hidden /> Файлы
         </TabsTrigger>
@@ -68,6 +74,9 @@ export function SourcePanel({
         </TabsTrigger>
         <TabsTrigger value="crawl" className="gap-1.5 data-[state=active]:text-emerald-400">
           <Globe className="h-4 w-4" aria-hidden /> Краулер
+        </TabsTrigger>
+        <TabsTrigger value="site" className="gap-1.5 data-[state=active]:text-emerald-400">
+          <Link2 className="h-4 w-4" aria-hidden /> Сайт
         </TabsTrigger>
       </TabsList>
 
@@ -188,6 +197,56 @@ export function SourcePanel({
         <p className="text-xs text-zinc-500">
           Краулер скачивает изображения из поиска, затем они автоматически проходят через сканер QR-кодов.
         </p>
+      </TabsContent>
+
+      <TabsContent value="site" className="mt-4 space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="site-url" className="text-zinc-300">
+            Адрес страницы
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              id="site-url"
+              placeholder="например: bitcointalk.org или bitcoin.org/ru/"
+              value={siteUrl}
+              onChange={(e) => setSiteUrl(e.target.value)}
+              disabled={busy}
+              className="bg-zinc-950/60 border-zinc-800 font-mono text-sm"
+            />
+            <Button
+              onClick={() => onSite({ url: siteUrl.trim(), archive: siteArchive, maxNum: siteMaxNum })}
+              disabled={busy || !siteUrl.trim()}
+              className="bg-emerald-500 text-zinc-950 hover:bg-emerald-400 shrink-0"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Search className="h-4 w-4" aria-hidden />}
+              Парсить
+            </Button>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Парсер собирает картинки со страницы и прогоняет их через сканер. Если сайт мёртв,
+            возьмём сохранённую копию из веб-архива (Wayback Machine) — удобно для старых
+            форумов и закрытых проектов.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-zinc-300">Веб-архив</Label>
+          <Select value={siteArchive} onValueChange={(v) => setSiteArchive(v as "auto" | "yes" | "no")} disabled={busy}>
+            <SelectTrigger className="bg-zinc-950/60 border-zinc-800">
+              <SelectValue placeholder="Режим" />
+            </SelectTrigger>
+            <SelectContent className="bg-zinc-900 border-zinc-800">
+              <SelectItem value="auto">Авто: сайт → при неудаче архив</SelectItem>
+              <SelectItem value="yes">Только веб-архив (Wayback)</SelectItem>
+              <SelectItem value="no">Только прямая загрузка</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-zinc-300">Максимум фото: {siteMaxNum}</Label>
+          <Slider value={[siteMaxNum]} min={5} max={200} step={5} onValueChange={(v) => setSiteMaxNum(v[0])} disabled={busy} />
+        </div>
       </TabsContent>
     </Tabs>
   );

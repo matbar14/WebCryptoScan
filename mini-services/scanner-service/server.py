@@ -35,8 +35,9 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from engine.crawler import ENGINE_NAMES, IMAGE_EXTS, PRESETS, collect_image_paths, crawl_images
 from engine.decoder import decode_image, open_image
-from engine.detectors import analyze_text, get_bip39
+from engine.detectors import analyze_bytes, analyze_text, get_bip39
 from engine.reports import write_reports
+from engine.sitespider import parse_site
 from PIL import Image
 import cv2
 import numpy as np
@@ -45,7 +46,7 @@ BASE_DIR = Path(__file__).resolve().parent
 JOBS_DIR = BASE_DIR / "jobs"
 JOBS_DIR.mkdir(exist_ok=True)
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 app = FastAPI(title="MrRobotQR 2.0 scanner service", version=VERSION)
 app.add_middleware(
@@ -64,6 +65,8 @@ DEFAULT_OPTIONS = {
     "detect_mini": True,
     "detect_hex": True,
     "detect_seed": True,
+    "detect_seedqr": True,
+    "detect_electrum": True,
 }
 
 
@@ -197,7 +200,10 @@ def _process_image(job: dict, image_path: Path) -> None:
     bip39 = get_bip39()
     findings = []
     for qi, r in enumerate(results):
-        for f in analyze_text(r.data, options, bip39):
+        detected = analyze_text(r.data, options, bip39)
+        if r.raw:
+            detected += analyze_bytes(r.raw, options, bip39)
+        for f in detected:
             f.update(
                 image=image_path.name,
                 qr_index=qi,
@@ -219,7 +225,7 @@ def _process_image(job: dict, image_path: Path) -> None:
     for f in findings:
         t = f["type"]
         job["stats"]["by_type"][t] = job["stats"]["by_type"].get(t, 0) + 1
-        if t.startswith("bip39"):
+        if t.startswith(("bip39", "seedqr", "electrum")):
             if f.get("valid_checksum"):
                 job["stats"]["valid_seeds"] += 1
             else:
@@ -239,7 +245,11 @@ def _worker(job_id: str, image_paths: list[Path], crawl_params: dict | None) -> 
             job["status"] = "crawling"
             job["phase"] = "crawl"
             _save_job(job)
-            res = crawl_images(JOBS_DIR / job_id / "images", **crawl_params)
+            if crawl_params.get("mode") == "site":
+                params = {k: v for k, v in crawl_params.items() if k != "mode"}
+                res = parse_site(JOBS_DIR / job_id / "images", **params)
+            else:
+                res = crawl_images(JOBS_DIR / job_id / "images", **crawl_params)
             job["crawl"] = res
             image_paths = collect_image_paths(JOBS_DIR / job_id / "images")
 
@@ -393,6 +403,24 @@ def scan_crawl(body: dict):
     crawl_params = {"keyword_list": keywords, "engines": engines, "max_num": max_num}
     _start_job(job, [], crawl_params)
     return {"job_id": job["id"], "keywords": keywords, "max_num": max_num}
+
+
+@app.post("/api/scan/site")
+def scan_site(body: dict):
+    url = str(body.get("url", "") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Укажите адрес сайта")
+    archive = str(body.get("archive", "auto") or "auto")
+    if archive not in ("auto", "yes", "no"):
+        raise HTTPException(status_code=400, detail="archive: auto | yes | no")
+    max_num = int(body.get("max_num", 30))
+    max_num = max(5, min(200, max_num))
+    opts = _parse_options(json.dumps(body.get("options", {})))
+    job = _new_job(label=f"Сайт: {url}", source_type="site", options=opts)
+    job["progress"]["total"] = 1
+    crawl_params = {"mode": "site", "url": url, "archive": archive, "max_num": max_num}
+    _start_job(job, [], crawl_params)
+    return {"job_id": job["id"], "url": url, "archive": archive, "max_num": max_num}
 
 
 @app.get("/api/jobs")

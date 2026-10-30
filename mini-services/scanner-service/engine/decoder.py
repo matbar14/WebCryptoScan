@@ -33,9 +33,12 @@ class DecodeResult:
     bbox: list[int]          # [x, y, w, h]
     engine: str              # pyzbar | wechat | opencv
     variant: str             # original | v1_scale | v2_clahe | v3_otsu | v4_adaptive
+    raw: bytes | None = None  # исходные байты QR (для Standard SeedQR); None у wechat/opencv
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("raw", None)
+        return d
 
 
 # --- Инициализация движков (ленивая, потокобезопасная через GIL) ---------------
@@ -73,13 +76,26 @@ def _bbox_from_points(points) -> list[int]:
     return [int(max(0, x0)), int(max(0, y0)), int(x1 - x0), int(y1 - y0)]
 
 
+def _restore_binary(data: bytes) -> bytes:
+    """zbar перекодирует byte-mode данные как latin1->utf8; восстанавливаем оригинал.
+
+    Для валидного UTF-8 текста latin-1 re-encode упадёт и байты останутся как есть;
+    для произвольной бинарной последовательности (Standard SeedQR) вернём исходные байты.
+    """
+    try:
+        return data.decode("utf-8").encode("latin-1")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return data
+
+
 def _run_pyzbar(gray: np.ndarray) -> list[DecodeResult]:
     out: list[DecodeResult] = []
     try:
         for obj in pyzbar.decode(gray):
             if obj.type == "QRCODE":
                 data = obj.data.decode("utf-8", errors="replace")
-                out.append(DecodeResult(data, "QRCODE", _bbox_from_pyzbar(obj), "pyzbar", ""))
+                out.append(DecodeResult(data, "QRCODE", _bbox_from_pyzbar(obj), "pyzbar", "",
+                                        raw=_restore_binary(obj.data)))
     except Exception:
         pass
     return out

@@ -14,8 +14,10 @@ import {
   deleteJob,
   getJob,
   getJobs,
+  isSeedType,
   scanCrawl,
   scanFolder,
+  scanSite,
   scanUpload,
   type Job,
   type JobSummary,
@@ -70,7 +72,7 @@ export default function Home() {
             setBusy(false);
             refreshHistory();
             if (j.status === "done") {
-              const keys = Object.entries(j.stats.by_type).filter(([t]) => !t.startsWith("bip39")).length;
+              const keys = Object.entries(j.stats.by_type).filter(([t]) => !isSeedType(t)).length;
               toast({
                 title: "Сканирование завершено",
                 description: `QR-кодов: ${j.stats.qr_codes}, находок: ${j.stats.findings}${keys ? ", типов ключей: " + keys : ""}`,
@@ -129,6 +131,14 @@ export default function Home() {
     [options, runJob],
   );
 
+  const onSite = useCallback(
+    (p: { url: string; archive: "auto" | "yes" | "no"; maxNum: number }) =>
+      runJob(() =>
+        scanSite({ url: p.url, archive: p.archive, max_num: p.maxNum, options }).then((r) => r.job_id),
+      ),
+    [options, runJob],
+  );
+
   const openHistoryJob = (id: string) => {
     setBusy(ACTIVE_STATUSES.has("queued"));
     getJob(id)
@@ -136,7 +146,9 @@ export default function Home() {
         setJob(j);
         if (ACTIVE_STATUSES.has(j.status)) trackJob(id);
         else setBusy(false);
-        setSourceTab(j.source_type === "crawl" ? "crawl" : j.source_type === "folder" ? "folder" : "upload");
+        setSourceTab(
+          j.source_type === "crawl" ? "crawl" : j.source_type === "site" ? "site" : j.source_type === "folder" ? "folder" : "upload",
+        );
       })
       .catch(() => toast({ title: "Джоба недоступна", variant: "destructive" }));
   };
@@ -197,10 +209,10 @@ export default function Home() {
                   <ScanLine className="h-4 w-4 text-emerald-400" aria-hidden />
                   Источник изображений
                 </CardTitle>
-                <CardDescription>Загрузите файлы, укажите папку на сервере или запустите краулер.</CardDescription>
+                <CardDescription>Загрузите файлы, укажите папку, запустите краулер или парсер сайтов.</CardDescription>
               </CardHeader>
               <CardContent>
-                <SourcePanel active={sourceTab} onActiveChange={setSourceTab} busy={busy} onUpload={onUpload} onFolder={onFolder} onCrawl={onCrawl} />
+                <SourcePanel active={sourceTab} onActiveChange={setSourceTab} busy={busy} onUpload={onUpload} onFolder={onFolder} onCrawl={onCrawl} onSite={onSite} />
               </CardContent>
             </Card>
 

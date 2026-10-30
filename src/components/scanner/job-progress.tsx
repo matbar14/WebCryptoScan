@@ -46,13 +46,22 @@ export function JobProgress({ job }: { job: Job }) {
       {job.status === "crawling" && job.crawl?.keywords && (
         <div className="space-y-1 rounded-md border border-zinc-800 bg-zinc-950/60 p-2 text-xs font-mono text-zinc-400">
           {Object.entries(job.crawl.keywords).map(([kw, info]) => (
-            <div key={kw} className="flex items-center gap-1.5">
-              <FileSearch className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden />
-              <span className="truncate">{kw}</span>
-              <span className="ml-auto shrink-0 text-zinc-500">{info.total} фото</span>
-              {Object.values(info.engines).some((e) => e.error) && (
-                <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" aria-hidden />
-              )}
+            <div key={kw} className="space-y-0.5">
+              <div className="flex items-center gap-1.5">
+                <FileSearch className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden />
+                <span className="truncate">{kw}</span>
+                <span className="ml-auto shrink-0 text-zinc-500">{info.total} фото</span>
+                {Object.values(info.engines).some((e) => e.error) && (
+                  <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" aria-hidden />
+                )}
+              </div>
+              {Object.values(info.engines)
+                .filter((e) => e.note)
+                .map((e, i) => (
+                  <div key={i} className="truncate pl-4 text-[11px] text-sky-400/80">
+                    ⓘ {e.note}
+                  </div>
+                ))}
             </div>
           ))}
         </div>

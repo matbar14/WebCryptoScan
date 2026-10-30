@@ -17,10 +17,10 @@
 | --- | --- |
 | `zbarlight` (мёртв, не собирается на новых Python) | Каскад: **pyzbar → WeChatQRCode (CV-модель) → OpenCV QRCodeDetector** |
 | Один проход по исходной картинке | Препроцессинг: масштабирование, **CLAHE**, **бинаризация Отсу**, адаптивный порог — до 5 попыток на изображение |
-| Поиск только WIF-ключей по регулярокам | WIF (compressed/uncompressed), **mini-ключи Casascius**, **hex-ключи**, **BIP39 сид-фразы (12/15/18/21/24)** с проверкой контрольной суммы |
+| Поиск только WIF-ключей по регулярокам | WIF (compressed/uncompressed), **mini-ключи Casascius**, **hex-ключи**, **BIP39 сид-фразы (12/15/18/21/24)** с проверкой контрольной суммы, **SeedQR (Compact + Standard)**, **Electrum старого формата (1626 слов)** |
 | `requests.get(blockchain.info)` — падает без retry | **Полностью офлайн**: Base58Check, префикс сети, secp256k1, вывод P2PKH-адреса |
 | `keylist.txt` + `sort | uniq` | **keylist.txt, seedlist.txt, scan_report.json, scan_report.csv** + веб-интерфейс с галереей |
-| Краулер на 3 поисковика одной пачкой | Краулер с **пресетами**, включая пресет «Сид-фразы (BIP39)», отчёт по каждой поисковой системе отдельно |
+| Краулер на 3 поисковика одной пачкой | **9 поисковых систем** с пресетами и отчётом по каждой, плюс **парсер сайтов** с фолбэком на Wayback Machine |
 | Зависимости-пины 2022 года | Python 3.10+, актуальные версии, всё запускается одной командой |
 
 ## Архитектура
@@ -29,11 +29,12 @@
 Браузер ── Caddy (XTransformPort) ──► Next.js 16 (:3000)  — интерфейс на русском
                                  └──► Python-сервис (:3031) — движок сканера
                                        ├─ engine/decoder.py   каскад декодирования
-                                       ├─ engine/detectors.py WIF / mini / hex / BIP39
+                                       ├─ engine/detectors.py WIF / mini / hex / BIP39 / SeedQR / Electrum
                                        ├─ engine/bitcoin.py   офлайн-валидация ключей
-                                       ├─ engine/crawler.py   icrawler + пресеты
+                                       ├─ engine/crawler.py   9 поисковых систем + пресеты
+                                       ├─ engine/sitespider.py парсер сайтов (+ Wayback)
                                        ├─ engine/reports.py   TXT / JSON / CSV
-                                       └─ data/bip39_english.txt  словарь BIP39 (2048 слов)
+                                       └─ data/  словари BIP39 (2048) и Electrum legacy (1626)
 ```
 
 - Python-сервис поднимается **автоматически** вместе с Next.js
@@ -62,7 +63,10 @@ python3 mini-services/scanner-service/server.py   # порт 3031
 ## Возможности интерфейса
 
 - **Источники изображений**: загрузка файлов (drag&drop), папка на сервере
-  (например `qrbooty` от старого MrRobotQR), краулер по ключевым словам.
+  (например `qrbooty` от старого MrRobotQR), краулер по ключевым словам и
+  **парсер сайтов**: вводите адрес — движок собирает картинки со страницы;
+  мёртвый сайт подхватывается из Wayback Machine (режимы «авто / только архив /
+  только прямая загрузка»).
 - **Пресеты краулера**: `Bitcoin QR / бумажные кошельки`, `Сид-фразы (BIP39)`,
   `Смешанный` — 8 запросов на пресет, **9 поисковых систем** (Google, Bing,
   Baidu, 360 Поиск, Sogou, DuckDuckGo, Яндекс, Wikimedia Commons, Openverse),
@@ -70,7 +74,8 @@ python3 mini-services/scanner-service/server.py   # порт 3031
   показываются отдельно: из дата-центров Google/Bing/Sogou/Яндекс/Wikimedia
   часто блокируются, Baidu и 360 работают стабильно. Скачивание — с
   md5-дедупликацией между движками и проверкой формата/размера.
-- **Настройки детекторов**: независимые переключатели WIF / BIP39 / mini / hex,
+- **Настройки детекторов**: независимые переключатели WIF / BIP39 / **SeedQR
+  (Compact + Standard)** / **Electrum (старый формат)** / mini / hex,
   тумблер улучшения изображений.
 - **Результаты**: прогресс в реальном времени, счётчики, таблица находок
   с копированием значений и адресов, галерея изображений с рамками вокруг QR
@@ -87,6 +92,7 @@ python3 mini-services/scanner-service/server.py   # порт 3031
 | POST | `/api/scan/upload` | multipart: файлы + options |
 | POST | `/api/scan/folder` | `{path, options}` |
 | POST | `/api/scan/crawl` | `{preset|keyword, engines[], max_num, options}` |
+| POST | `/api/scan/site` | `{url, archive: auto\|yes\|no, max_num, options}` |
 | GET | `/api/jobs` | список джоб |
 | GET | `/api/jobs/{id}` | статус, прогресс, статистика, находки |
 | DELETE | `/api/jobs/{id}` | удалить джобу |

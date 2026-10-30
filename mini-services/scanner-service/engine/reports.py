@@ -49,8 +49,10 @@ def write_reports(job: dict, job_dir: Path) -> dict:
     keys = _unique_by_value([f for f in findings if f.get("type") in KEY_TYPES])
     (job_dir / "keylist.txt").write_text("".join(f["value"] + "\n" for f in keys), encoding="utf-8")
 
-    # --- seedlist.txt: уникальные сид-фразы ---
-    seeds = _unique_by_value([f for f in findings if str(f.get("type", "")).startswith("bip39")])
+    # --- seedlist.txt: уникальные сид-фразы (BIP39, SeedQR, Electrum) ---
+    seeds = _unique_by_value(
+        [f for f in findings if str(f.get("type", "")).startswith(("bip39", "seedqr", "electrum"))]
+    )
     (job_dir / "seedlist.txt").write_text("".join(f["value"] + "\n" for f in seeds), encoding="utf-8")
 
     # --- scan_report.json ---

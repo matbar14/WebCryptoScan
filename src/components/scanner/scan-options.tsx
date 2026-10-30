@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, ListChecks, ScanLine, SlidersHorizontal, TextCursorInput } from "lucide-react";
+import { KeyRound, ListChecks, ScanLine, Shapes, SlidersHorizontal, TextCursorInput } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { ScanOptions } from "@/lib/scanner-api";
@@ -17,6 +17,18 @@ const ITEMS: { key: keyof ScanOptions; label: string; hint: string; icon: React.
     label: "BIP39 сид-фразы",
     hint: "12/15/18/21/24 слов + checksum",
     icon: <ListChecks className="h-3.5 w-3.5" aria-hidden />,
+  },
+  {
+    key: "detect_seedqr",
+    label: "SeedQR (Compact/Standard)",
+    hint: "SeedSigner: индексы слов и энтропия",
+    icon: <Shapes className="h-3.5 w-3.5" aria-hidden />,
+  },
+  {
+    key: "detect_electrum",
+    label: "Electrum (старый формат)",
+    hint: "12 слов, словарь 1626",
+    icon: <KeyRound className="h-3.5 w-3.5" aria-hidden />,
   },
   {
     key: "detect_mini",

@@ -37,7 +37,10 @@ export interface Finding {
 }
 
 export interface CrawlInfo {
-  keywords?: Record<string, { engines: Record<string, { count: number; error: string | null }>; total: number }>;
+  keywords?: Record<
+    string,
+    { engines: Record<string, { count: number; error: string | null; note?: string | null }>; total: number }
+  >;
   total?: number;
 }
 
@@ -54,7 +57,7 @@ export interface JobStats {
 export interface Job {
   id: string;
   label: string;
-  source_type: "upload" | "folder" | "crawl";
+  source_type: "upload" | "folder" | "crawl" | "site";
   status: "queued" | "crawling" | "running" | "done" | "error";
   phase: "crawl" | "scan" | "done";
   created_at: string;
@@ -79,6 +82,8 @@ export interface ScanOptions {
   detect_mini: boolean;
   detect_hex: boolean;
   detect_seed: boolean;
+  detect_seedqr: boolean;
+  detect_electrum: boolean;
 }
 
 export const DEFAULT_OPTIONS: ScanOptions = {
@@ -87,6 +92,8 @@ export const DEFAULT_OPTIONS: ScanOptions = {
   detect_mini: true,
   detect_hex: true,
   detect_seed: true,
+  detect_seedqr: true,
+  detect_electrum: true,
 };
 
 export interface JobSummary {
@@ -173,6 +180,20 @@ export async function scanCrawl(params: {
   return handle<{ job_id: string; keywords: string[]; max_num: number }>(res);
 }
 
+export async function scanSite(params: {
+  url: string;
+  archive: "auto" | "yes" | "no";
+  max_num: number;
+  options: ScanOptions;
+}): Promise<{ job_id: string; url: string; archive: string; max_num: number }> {
+  const res = await fetch(apiUrl("scan/site"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return handle<{ job_id: string; url: string; archive: string; max_num: number }>(res);
+}
+
 // --- Хелперы UI -------------------------------------------------------------------
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -184,13 +205,18 @@ export const TYPE_LABELS: Record<string, string> = {
 
 export function typeLabel(type: string): string {
   if (TYPE_LABELS[type]) return TYPE_LABELS[type];
-  const m = type.match(/^bip39_seed_phrase_(\d+)$/);
+  let m = type.match(/^bip39_seed_phrase_(\d+)$/);
   if (m) return `Сид-фраза (${m[1]} слов)`;
+  m = type.match(/^seedqr_compact_(\d+)$/);
+  if (m) return `SeedQR Compact (${m[1]} слов)`;
+  m = type.match(/^seedqr_standard_(\d+)$/);
+  if (m) return `SeedQR Standard (${m[1]} слов)`;
+  if (type === "electrum_legacy_seed") return "Electrum (старый формат)";
   return type;
 }
 
 export function isSeedType(type: string): boolean {
-  return type.startsWith("bip39");
+  return type.startsWith("bip39") || type.startsWith("seedqr") || type.startsWith("electrum");
 }
 
 export function imageUrl(jobId: string, name: string, annotated = false): string {
