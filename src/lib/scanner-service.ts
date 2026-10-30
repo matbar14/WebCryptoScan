@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import fs from "fs";
 import path from "path";
 
 /**
@@ -28,8 +29,27 @@ export async function isScannerUp(timeoutMs = 1500): Promise<boolean> {
   }
 }
 
+/** Python для автозапуска: сначала venv (его создаёт start.sh), потом системный python3. */
+function resolvePython(): string {
+  if (process.env.SCANNER_PYTHON) return process.env.SCANNER_PYTHON;
+  const candidates = [
+    path.join(SERVICE_DIR, ".venv", "bin", "python"), // venv сервиса (Linux/macOS)
+    path.join(process.cwd(), ".venv", "bin", "python"), // venv в корне проекта
+    path.join(SERVICE_DIR, ".venv", "Scripts", "python.exe"), // Windows
+    path.join(process.cwd(), ".venv", "Scripts", "python.exe"),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {
+      /* ignore */
+    }
+  }
+  return "python3";
+}
+
 export function spawnScanner(): void {
-  const cmd = process.env.SCANNER_PYTHON || "python3";
+  const cmd = resolvePython();
   try {
     const child = spawn(cmd, ["server.py"], {
       cwd: SERVICE_DIR,
@@ -37,6 +57,8 @@ export function spawnScanner(): void {
       stdio: "ignore",
       env: { ...process.env, PYTHONUNBUFFERED: "1" },
     });
+    // без обработчика ENOENT/EACCES уронил бы процесс Next.js
+    child.on("error", () => {});
     child.unref();
   } catch {
     // тихо: повторные попытки делает ensureScannerService

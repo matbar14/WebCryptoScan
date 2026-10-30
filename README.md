@@ -73,21 +73,34 @@ GitHub).
 
 ## Запуск (локально)
 
+Самый простой способ — один скрипт. Он сам создаёт venv, ставит зависимости
+Python, поднимает движок (порт 3031) и фронтенд (порт 3000); повторный запуск
+безопасен и переиспользует готовое:
+
+```bash
+./start.sh          # Linux / macOS
+start.bat           # Windows (двойной клик или в cmd)
+```
+
+Ручной вариант (если хочется по шагам):
+
 ```bash
 # 1. Системные зависимости
-sudo apt install libzbar0 poppler-utils   # pyzbar и растеризация PDF (Debian/Ubuntu)
+sudo apt install libzbar0 poppler-utils python3-venv curl   # Debian/Ubuntu
 # macOS: brew install zbar poppler
 
-# 2. Python-зависимости движка
-python3 -m pip install -r mini-services/scanner-service/requirements.txt
+# 2. Python-зависимости движка (в venv, чтобы не трогать системный python)
+python3 -m venv mini-services/scanner-service/.venv
+mini-services/scanner-service/.venv/bin/pip install -r mini-services/scanner-service/requirements.txt
 
 # 3. Фронтенд (Next.js 16 + TypeScript)
 npm ci              # установка строго по package-lock.json (фиксированные версии)
 npm run dev         # http://localhost:3000
-
-# 4. (опционально) Python-сервис отдельно — иначе он стартует сам
-python3 mini-services/scanner-service/server.py   # порт 3031
 ```
+
+Python-движок при этом стартует сам вместе с Next.js (и через venv, если он
+есть); отдельно его можно поднять так:
+`mini-services/scanner-service/.venv/bin/python mini-services/scanner-service/server.py`.
 
 > **Если `npm run dev` падает с `Cannot find native binding` / `Cannot find
 > module '@tailwindcss/oxide-linux-x64-gnu'`** — это известный баг npm с
