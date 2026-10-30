@@ -1,12 +1,26 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, FileSearch, Globe, Loader2, ScanLine, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, FileSearch, Globe, Loader2, ScanLine, XCircle } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import type { Job } from "@/lib/scanner-api";
 
+const SOURCE_RU: Record<string, string> = {
+  cdx: "Веб-архив (CDX)",
+  bing: "Bing",
+  marginalia: "Marginalia",
+  baidu: "Baidu",
+  duckduckgo: "DuckDuckGo",
+  commoncrawl: "Common Crawl",
+  github: "GitHub",
+};
+
 function phaseLabel(job: Job): string {
+  const isGlobal = job.source_type.startsWith("global_");
   if (job.status === "queued") return "В очереди…";
-  if (job.status === "crawling") return "Поиск изображений в поисковых системах…";
+  if (job.status === "crawling") {
+    if (isGlobal && job.crawl_stage) return job.crawl_stage;
+    return isGlobal ? "Глобальный поиск…" : "Поиск изображений в поисковых системах…";
+  }
   if (job.status === "running") return "Сканирование изображений…";
   if (job.status === "done") return "Готово";
   if (job.status === "error") return "Ошибка";
@@ -43,7 +57,28 @@ export function JobProgress({ job }: { job: Job }) {
 
       <Progress value={pct} className="h-2 bg-zinc-800 [&>div]:bg-emerald-400" aria-label="Прогресс сканирования" />
 
-      {job.status === "crawling" && job.crawl?.keywords && (
+      {(job.status === "crawling" || job.status === "running" || job.status === "done") &&
+        job.source_type.startsWith("global_") && (
+        <div className="space-y-1 rounded-md border border-zinc-800 bg-zinc-950/60 p-2 text-xs font-mono text-zinc-400">
+          {Object.entries(job.crawl?.sources ?? {}).map(([src, info]) => (
+            <div key={src} className="flex items-center gap-1.5">
+              <Database className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden />
+              <span className="shrink-0 text-zinc-300">{SOURCE_RU[src] ?? src}</span>
+              <span className="ml-auto shrink-0 text-zinc-500">{info.count}</span>
+              {info.error && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" aria-hidden />}
+            </div>
+          ))}
+          {Object.values(job.crawl?.sources ?? {})
+            .filter((e) => e.error || e.note)
+            .map((e, i) => (
+              <div key={i} className="truncate text-[11px] text-amber-400/80">
+                ⓘ {e.error ?? e.note}
+              </div>
+            ))}
+        </div>
+      )}
+
+      {job.status === "crawling" && !job.source_type.startsWith("global_") && job.crawl?.keywords && (
         <div className="space-y-1 rounded-md border border-zinc-800 bg-zinc-950/60 p-2 text-xs font-mono text-zinc-400">
           {Object.entries(job.crawl.keywords).map(([kw, info]) => (
             <div key={kw} className="space-y-0.5">

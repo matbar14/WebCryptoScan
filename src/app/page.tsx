@@ -17,8 +17,10 @@ import {
   isSeedType,
   scanCrawl,
   scanFolder,
+  scanGlobal,
   scanSite,
   scanUpload,
+  type GlobalMode,
   type Job,
   type JobSummary,
   type ScanOptions,
@@ -139,6 +141,24 @@ export default function Home() {
     [options, runJob],
   );
 
+  const onGlobal = useCallback(
+    (p: {
+      mode: GlobalMode;
+      domain?: string;
+      provider?: "auto" | "wayback" | "arquivo";
+      mask?: string;
+      presets?: string[];
+      custom?: string;
+      engines?: string[];
+      token?: string;
+      max_urls?: number;
+      max_pages?: number;
+      max_files?: number;
+    }) =>
+      runJob(() => scanGlobal({ ...p, options }).then((r) => r.job_id)),
+    [options, runJob],
+  );
+
   const openHistoryJob = (id: string) => {
     setBusy(ACTIVE_STATUSES.has("queued"));
     getJob(id)
@@ -147,7 +167,15 @@ export default function Home() {
         if (ACTIVE_STATUSES.has(j.status)) trackJob(id);
         else setBusy(false);
         setSourceTab(
-          j.source_type === "crawl" ? "crawl" : j.source_type === "site" ? "site" : j.source_type === "folder" ? "folder" : "upload",
+          j.source_type === "crawl"
+            ? "crawl"
+            : j.source_type === "site"
+              ? "site"
+              : j.source_type.startsWith("global_")
+                ? "global"
+                : j.source_type === "folder"
+                  ? "folder"
+                  : "upload",
         );
       })
       .catch(() => toast({ title: "Джоба недоступна", variant: "destructive" }));
@@ -209,10 +237,10 @@ export default function Home() {
                   <ScanLine className="h-4 w-4 text-emerald-400" aria-hidden />
                   Источник изображений
                 </CardTitle>
-                <CardDescription>Загрузите файлы, укажите папку, запустите краулер или парсер сайтов.</CardDescription>
+                <CardDescription>Файлы, папка, краулер, парсер сайтов — или глобальный поиск: архивы, dork-запросы, Common Crawl, GitHub.</CardDescription>
               </CardHeader>
               <CardContent>
-                <SourcePanel active={sourceTab} onActiveChange={setSourceTab} busy={busy} onUpload={onUpload} onFolder={onFolder} onCrawl={onCrawl} onSite={onSite} />
+                <SourcePanel active={sourceTab} onActiveChange={setSourceTab} busy={busy} onUpload={onUpload} onFolder={onFolder} onCrawl={onCrawl} onSite={onSite} onGlobal={onGlobal} />
               </CardContent>
             </Card>
 

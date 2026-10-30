@@ -19,6 +19,7 @@ API:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import threading
@@ -37,6 +38,7 @@ from engine.crawler import ENGINE_NAMES, IMAGE_EXTS, PRESETS, collect_image_path
 from engine.decoder import decode_image, open_image
 from engine.detectors import analyze_bytes, analyze_text, get_bip39
 from engine.addresses import attach_addresses
+from engine.globalsearch import DORK_ENGINE_LABELS, DORK_PRESETS, GITHUB_PRESETS, run_global
 from engine.reports import write_reports
 from engine.sitespider import parse_site
 from engine.textscan import (
@@ -382,6 +384,38 @@ def _process_text_file(job: dict, file_path: Path) -> None:
     job["stats"]["images"] += 0  # текстовые файлы не считаем изображениями
 
 
+def _process_page_text(job: dict, url: str, text: str, detail: str) -> None:
+    """Строковые значения из текста страницы (сайт, архив, PDF)."""
+    if not text.strip():
+        return
+    findings = []
+    for f in analyze_text(text, job["options"], get_bip39()):
+        f.update(
+            image=url,
+            qr_index=0,
+            engine="text",
+            variant="html",
+            bbox=[0, 0, 0, 0],
+            source="page",
+            source_detail=detail,
+        )
+        findings.append(f)
+    if job["options"].get("detect_addresses", True):
+        attach_addresses(findings)
+    for f in findings:
+        t = f["type"]
+        job["stats"]["by_type"][t] = job["stats"]["by_type"].get(t, 0) + 1
+        if t.startswith(("bip39", "seedqr", "electrum")):
+            if f.get("valid_checksum"):
+                job["stats"]["valid_seeds"] += 1
+            else:
+                job["stats"]["invalid_seeds"] += 1
+        fid = len(job["findings"]) + 1
+        f["id"] = fid
+        job["findings"].append(f)
+    job["stats"]["findings"] += len(findings)
+
+
 def _worker(job_id: str, items: list[tuple[Path, str]], crawl_params: dict | None) -> None:
     """items — пары (путь, тип): 'image' | 'doc'. При crawl_params — сначала скачивание."""
     with LOCK:
@@ -394,44 +428,54 @@ def _worker(job_id: str, items: list[tuple[Path, str]], crawl_params: dict | Non
             if crawl_params.get("mode") == "site":
                 params = {k: v for k, v in crawl_params.items() if k != "mode"}
                 res = parse_site(JOBS_DIR / job_id / "images", **params)
+            elif crawl_params.get("mode") == "global":
+                def _prog(stage: str, done: int, total: int) -> None:
+                    job["progress"] = {"total": max(1, total), "processed": done}
+                    job["crawl_stage"] = stage
+                    if done == 0 or done % 10 == 0 or done == total:
+                        _save_job(job)
+
+                gp = {k: v for k, v in crawl_params.items() if k != "mode"}
+                gp["mode"] = str(crawl_params.get("global_mode", "archive"))
+                res = run_global(JOBS_DIR / job_id, gp, progress=_prog)
             else:
                 res = crawl_images(JOBS_DIR / job_id / "images", **crawl_params)
             job["crawl"] = res
             image_paths = collect_image_paths(JOBS_DIR / job_id / "images")
-            items = [(p, "image") for p in image_paths]
+            if crawl_params.get("mode") == "global":
+                # файлы из files/ — строковый анализ; подмножество pages/ — как страницы
+                doc_paths = collect_document_paths(JOBS_DIR / job_id / "files") \
+                    if job["options"].get("scan_strings", True) else []
+                items = [(p, "image") for p in image_paths] + [(p, "doc") for p in doc_paths]
+            else:
+                items = [(p, "image") for p in image_paths]
 
             # текст страницы (сайт/архив) — тоже источник строковых значений
             if job["options"].get("scan_strings", True) and crawl_params.get("mode") == "site":
                 page_text = (res.get("page_text") or "").strip()
                 page_url = res.get("page_url") or res.get("label") or "страница"
                 if page_text:
-                    bip39 = get_bip39()
-                    findings = []
-                    for f in analyze_text(page_text, job["options"], bip39):
-                        f.update(
-                            image=page_url,
-                            qr_index=0,
-                            engine="text",
-                            variant="html",
-                            bbox=[0, 0, 0, 0],
-                            source="page",
-                            source_detail="видимый текст страницы",
-                        )
-                        findings.append(f)
-                    if job["options"].get("detect_addresses", True):
-                        attach_addresses(findings)
-                    for f in findings:
-                        t = f["type"]
-                        job["stats"]["by_type"][t] = job["stats"]["by_type"].get(t, 0) + 1
-                        if t.startswith(("bip39", "seedqr", "electrum")):
-                            if f.get("valid_checksum"):
-                                job["stats"]["valid_seeds"] += 1
-                            else:
-                                job["stats"]["invalid_seeds"] += 1
-                        fid = len(job["findings"]) + 1
-                        f["id"] = fid
-                        job["findings"].append(f)
-                    job["stats"]["findings"] += len(findings)
+                    _process_page_text(job, page_url, page_text, "видимый текст страницы")
+
+            # страницы глобального поиска: манифест pages/manifest.json
+            if job["options"].get("scan_strings", True) and crawl_params.get("mode") == "global":
+                mf = JOBS_DIR / job_id / "pages" / "manifest.json"
+                if mf.is_file():
+                    try:
+                        entries = json.loads(mf.read_text(encoding="utf-8"))
+                    except Exception:  # noqa: BLE001
+                        entries = []
+                    for e in entries[:200]:
+                        pf = JOBS_DIR / job_id / "pages" / e.get("file", "")
+                        if not pf.is_file():
+                            continue
+                        try:
+                            text = pf.read_text(encoding="utf-8", errors="replace")
+                        except OSError:
+                            continue
+                        kind = e.get("kind", "html")
+                        detail = ("PDF-документ: " if kind == "pdf" else "видимый текст страницы: ") + e.get("url", "")
+                        _process_page_text(job, e.get("url", "страница"), text, detail)
 
         job["status"] = "running"
         job["phase"] = "scan"
@@ -623,6 +667,74 @@ def scan_site(body: dict):
     crawl_params = {"mode": "site", "url": url, "archive": archive, "max_num": max_num}
     _start_job(job, [], crawl_params)
     return {"job_id": job["id"], "url": url, "archive": archive, "max_num": max_num}
+
+
+GLOBAL_MODES = ("archive", "dorks", "commoncrawl", "github")
+
+
+@app.get("/api/global/presets")
+def global_presets():
+    """Пресеты dork-запросов и GitHub-поиска + метки движков для UI."""
+    return {
+        "dorks": DORK_PRESETS,
+        "github": GITHUB_PRESETS,
+        "dork_engines": DORK_ENGINE_LABELS,
+    }
+
+
+@app.post("/api/scan/global")
+def scan_global(body: dict):
+    mode = str(body.get("mode", "") or "").strip()
+    if mode not in GLOBAL_MODES:
+        raise HTTPException(status_code=400, detail="mode: archive | dorks | commoncrawl | github")
+    opts = _parse_options(json.dumps(body.get("options", {})))
+
+    params: dict = {"mode": mode}
+    if mode == "archive":
+        domain = str(body.get("domain", "") or "").strip()
+        if not domain:
+            raise HTTPException(status_code=400, detail="Укажите домен для веб-архива")
+        provider = str(body.get("provider", "auto") or "auto")
+        if provider not in ("auto", "wayback", "arquivo"):
+            raise HTTPException(status_code=400, detail="provider: auto | wayback | arquivo")
+        params.update(domain=domain, provider=provider,
+                      max_num=int(body.get("max_urls", 60)))
+        label = f"Архивы: {domain}"
+    elif mode == "dorks":
+        presets = [p for p in (body.get("presets") or []) if p in DORK_PRESETS]
+        custom = str(body.get("custom", "") or "").strip()
+        engines = [e for e in (body.get("engines") or ["bing"]) if e in DORK_ENGINE_LABELS]
+        if not presets and not custom:
+            raise HTTPException(status_code=400, detail="Выберите пресет dork-запросов или введите свой")
+        if not engines:
+            raise HTTPException(status_code=400, detail="Не выбран ни один поисковый движок")
+        params.update(presets=presets, custom=custom, engines=engines,
+                      max_pages=int(body.get("max_pages", 10)),
+                      max_files=int(body.get("max_files", 20)))
+        label = f"Dork-поиск: {custom or ', '.join(DORK_PRESETS[p]['label'] for p in presets)}"
+    elif mode == "commoncrawl":
+        mask = str(body.get("mask", "") or "").strip()
+        if not mask:
+            raise HTTPException(status_code=400, detail="Укажите маску URL (например, example.com/*)")
+        params.update(mask=mask, max_num=int(body.get("max_urls", 60)))
+        label = f"Common Crawl: {mask}"
+    else:  # github
+        presets = [p for p in (body.get("presets") or []) if p in GITHUB_PRESETS]
+        custom = str(body.get("custom", "") or "").strip()
+        token = str(body.get("token", "") or "").strip() or os.environ.get("GITHUB_TOKEN", "")
+        if not presets and not custom:
+            raise HTTPException(status_code=400, detail="Выберите пресет или введите свой запрос")
+        if not token:
+            raise HTTPException(status_code=400, detail="Укажите GitHub-токен (поиск кода требует авторизацию)")
+        params.update(presets=presets, custom=custom, token=token,
+                      max_files=int(body.get("max_files", 20)))
+        label = f"GitHub: {custom or ', '.join(GITHUB_PRESETS[p]['label'] for p in presets)}"
+
+    job = _new_job(label=label, source_type=f"global_{mode}", options=opts)
+    job["progress"]["total"] = 0
+    crawl_params = {"mode": "global", "global_mode": mode, **{k: v for k, v in params.items() if k != "mode"}}
+    _start_job(job, [], crawl_params)
+    return {"job_id": job["id"], "mode": mode, "label": label}
 
 
 @app.get("/api/jobs")

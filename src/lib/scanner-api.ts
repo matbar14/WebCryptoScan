@@ -46,6 +46,14 @@ export interface CrawlInfo {
     { engines: Record<string, { count: number; error: string | null; note?: string | null }>; total: number }
   >;
   total?: number;
+  // глобальный поиск (mode = archive | dorks | commoncrawl | github)
+  mode?: string;
+  sources?: Record<string, { count: number; error?: string | null; note?: string | null; [k: string]: unknown }>;
+  images?: number;
+  docs?: number;
+  pages?: number;
+  blocked?: number;
+  skipped?: number;
 }
 
 export interface JobStats {
@@ -63,12 +71,13 @@ export interface JobStats {
 export interface Job {
   id: string;
   label: string;
-  source_type: "upload" | "folder" | "crawl" | "site";
+  source_type: "upload" | "folder" | "crawl" | "site" | `global_${string}`;
   status: "queued" | "crawling" | "running" | "done" | "error";
   phase: "crawl" | "scan" | "done";
   created_at: string;
   finished_at?: string | null;
   progress: { total: number; processed: number };
+  crawl_stage?: string | null;
   stats: JobStats;
   findings: Finding[];
   errors: { image: string; error: string }[];
@@ -204,6 +213,41 @@ export async function scanSite(params: {
     body: JSON.stringify(params),
   });
   return handle<{ job_id: string; url: string; archive: string; max_num: number }>(res);
+}
+
+export type GlobalMode = "archive" | "dorks" | "commoncrawl" | "github";
+
+export interface GlobalPresets {
+  dorks: Record<string, Preset & { queries: { dork: string; plain: string }[] }>;
+  github: Record<string, Preset>;
+  dork_engines: Record<string, string>;
+}
+
+export async function getGlobalPresets(): Promise<GlobalPresets> {
+  const res = await fetch(apiUrl("global/presets"), { cache: "no-store" });
+  return handle<GlobalPresets>(res);
+}
+
+export async function scanGlobal(params: {
+  mode: GlobalMode;
+  options: ScanOptions;
+  domain?: string;
+  provider?: "auto" | "wayback" | "arquivo";
+  mask?: string;
+  presets?: string[];
+  custom?: string;
+  engines?: string[];
+  token?: string;
+  max_urls?: number;
+  max_pages?: number;
+  max_files?: number;
+}): Promise<{ job_id: string; mode: string; label: string }> {
+  const res = await fetch(apiUrl("scan/global"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return handle<{ job_id: string; mode: string; label: string }>(res);
 }
 
 // --- Хелперы UI -------------------------------------------------------------------
