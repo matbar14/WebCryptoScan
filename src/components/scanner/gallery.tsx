@@ -3,7 +3,6 @@
 import { useMemo } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { typeLabel, imageUrl, isSeedType, isImageName, sourceLabel, type Job } from "@/lib/scanner-api";
 import { CopyValue } from "./copy-value";
 
@@ -90,7 +89,7 @@ export function Gallery({ job }: { job: Job }) {
                   alt={`Оригинал ${name}`}
                   className="max-h-80 w-full rounded-md border border-zinc-800 object-contain bg-zinc-950"
                 />
-                <ScrollArea className="max-h-80 rounded-md border border-zinc-800">
+                <div className="max-h-80 overflow-y-auto rounded-md border border-zinc-800 [scrollbar-width:thin] [scrollbar-color:#3f3f46_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-700">
                   <div className="space-y-3 p-3">
                     {findings.length === 0 && <p className="text-sm text-zinc-500">Секретов на изображении не обнаружено.</p>}
                     {findings.map((f) => (
@@ -115,7 +114,7 @@ export function Gallery({ job }: { job: Job }) {
                       </div>
                     ))}
                   </div>
-                </ScrollArea>
+                </div>
               </div>
             </DialogContent>
           </Dialog>

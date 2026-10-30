@@ -5,7 +5,6 @@ import { Delete, History, Loader2, QrCode, ScanLine, ShieldCheck, Trash2, Wifi, 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -308,8 +307,8 @@ export default function Home() {
                 {history.length === 0 ? (
                   <p className="text-sm text-zinc-500">Пока нет завершённых сканирований.</p>
                 ) : (
-                  <ScrollArea className="max-h-72">
-                    <div className="space-y-1.5 pr-2">
+                  <div className="max-h-72 overflow-y-auto pr-2 [scrollbar-width:thin] [scrollbar-color:#3f3f46_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-700">
+                    <div className="space-y-1.5">
                       {history.map((h) => (
                         <div
                           key={h.id}
@@ -338,7 +337,7 @@ export default function Home() {
                         </div>
                       ))}
                     </div>
-                  </ScrollArea>
+                  </div>
                 )}
               </CardContent>
             </Card>
