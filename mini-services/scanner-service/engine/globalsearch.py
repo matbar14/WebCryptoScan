@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MrRobotQR 2.0 — глобальный поиск: 4 источника URL + универсальный конвейер загрузки.
+WebCryptoScan — глобальный поиск: 4 источника URL + универсальный конвейер загрузки.
 
 Источники (режимы):
   archive      — веб-архивы: CDX-перечисление домена целиком.
@@ -15,7 +15,7 @@ MrRobotQR 2.0 — глобальный поиск: 4 источника URL + у
   изображения -> images/ (дальше обычный QR+OCR конвейер);
   документы   -> files/  (строковые детекторы: WIF, сиды, адреса...);
   zip         -> распаковка с лимитами, содержимое раскладывается так же;
-  pdf         -> текст pypdf;
+  pdf         -> текст pypdf + растеризация страниц в JPEG (страницы идут в QR-сканер);
   html        -> видимый текст страницы (pages/ + manifest).
 
 Все источники возвращают честные статусы: блокировка одного не ломает остальные.
@@ -37,15 +37,13 @@ import requests
 
 from .crawler import _HEADERS, _HTTP_TIMEOUT, _load_seen_hashes, _save_image
 from .sitespider import _is_fetchable_url
-from .textscan import page_visible_text
+from .textscan import page_visible_text, pdf_raster_bytes, pdf_text
 
 # --- Константы --------------------------------------------------------------------
 
 MAX_ITEM_BYTES = 25 * 1024 * 1024          # выше — не качаем
 ZIP_MAX_ENTRIES = 100                       # максимум файлов из одного архива
 ZIP_MAX_TOTAL = 80 * 1024 * 1024            # суммарный лимит распаковки
-PDF_MAX_PAGES = 50
-PDF_MAX_TEXT = 300_000
 MAX_PAGES_MANIFEST = 200                    # страниц в джобе — не больше
 
 DOC_EXTS = {
@@ -367,22 +365,6 @@ class _Store:
             json.dumps(self.pages, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def _pdf_text(data: bytes) -> str:
-    try:
-        from pypdf import PdfReader
-
-        reader = PdfReader(io.BytesIO(data))
-        parts = []
-        for page in reader.pages[:PDF_MAX_PAGES]:
-            try:
-                parts.append(page.extract_text() or "")
-            except Exception:  # noqa: BLE001 — битая страница не ломает документ
-                continue
-        return "\n".join(parts)[:PDF_MAX_TEXT]
-    except Exception:  # noqa: BLE001 — pypdf не установлен или файл не pdf
-        return ""
-
-
 def _route_bytes(data: bytes, mime: str, url: str, store: _Store, depth: int = 0) -> str:
     """Раскладывает скачанные байты по типам. Возвращает 'image'|'doc'|'page'|'skip'."""
     kind = split_kind(url, mime)
@@ -400,8 +382,15 @@ def _route_bytes(data: bytes, mime: str, url: str, store: _Store, depth: int = 0
         ext = _url_ext(url)
         ct = (mime or "").split(";")[0].strip().lower()
         if ct == "application/pdf" or ext == ".pdf":
-            text = _pdf_text(data)
-            return "page" if text and store.add_page(text, url, kind="pdf") else "skip"
+            saved: str = "skip"
+            text = pdf_text(data)
+            if text and store.add_page(text, url, kind="pdf"):
+                saved = "page"
+            # растеризация страниц PDF → JPEG: страницы уходят в QR-конвейер
+            for i, page_bytes in enumerate(pdf_raster_bytes(data), 1):
+                if store.add_image(page_bytes, f"{url}#page={i}"):
+                    saved = "image"
+            return saved
         if ext == ".zip" or ct in ("application/zip", "application/x-zip-compressed"):
             if depth < 1:
                 _unpack_zip(data, url, store, depth)

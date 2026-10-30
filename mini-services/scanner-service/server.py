@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MrRobotQR 2.0 — веб-сервис сканера (mini service, порт 3031).
+WebCryptoScan — веб-сервис сканера (mini service, порт 3031).
 
 API:
   GET  /api/health                     — состояние сервиса и движков
@@ -59,6 +59,7 @@ from engine.textscan import (
     ocr_image_lines,
     ocr_normalize,
     page_visible_text,
+    pdf_rasterize,
 )
 from PIL import Image
 import cv2
@@ -68,9 +69,9 @@ BASE_DIR = Path(__file__).resolve().parent
 JOBS_DIR = BASE_DIR / "jobs"
 JOBS_DIR.mkdir(exist_ok=True)
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
-app = FastAPI(title="MrRobotQR 2.0 scanner service", version=VERSION)
+app = FastAPI(title="WebCryptoScan scanner service", version=VERSION)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -598,11 +599,19 @@ async def scan_upload(
         saved.append(dst)
     if not saved:
         raise HTTPException(status_code=400, detail="Ни один файл не сохранён")
-    items = [
-        (p, "image" if looks_like_image(p.name) else "doc")
-        for p in saved
-    ]
-    return JSONResponse({"job_id": _start_job(job, items)})
+    items: list[tuple[Path, str]] = []
+    pdf_pages = 0
+    for p in saved:
+        if looks_like_image(p.name):
+            items.append((p, "image"))
+            continue
+        if p.suffix.lower() == ".pdf":
+            # страницы PDF → JPEG → QR-сканер; сам pdf остаётся в строковом анализе
+            for page in pdf_rasterize(p.read_bytes(), img_dir, f"{p.stem}_pdf"):
+                items.append((page, "image"))
+                pdf_pages += 1
+        items.append((p, "doc"))
+    return JSONResponse({"job_id": _start_job(job, items), "pdf_pages": pdf_pages})
 
 
 @app.post("/api/scan/folder")
@@ -619,11 +628,29 @@ def scan_folder(body: dict):
     docs: list[Path] = []
     if opts.get("scan_strings", True):
         docs = collect_document_paths(folder)
-    items = [(p, "image") for p in paths] + [(p, "doc") for p in docs]
+    items: list[tuple[Path, str]] = [(p, "image") for p in paths] + [(p, "doc") for p in docs]
+    # PDF из папки: страницы → JPEG → QR-сканер (до 20 файлов)
+    img_dir = JOBS_DIR / job["id"] / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    pdf_pages = 0
+    pdf_count = 0
+    for pf in sorted(folder.rglob("*")):
+        if not (pf.is_file() and pf.suffix.lower() == ".pdf"):
+            continue
+        pdf_count += 1
+        if pdf_count > 20:
+            break
+        try:
+            pages = pdf_rasterize(pf.read_bytes(), img_dir, f"{pf.stem}_pdf")
+        except OSError:
+            continue
+        for page in pages:
+            items.append((page, "image"))
+            pdf_pages += 1
     if not items:
-        raise HTTPException(status_code=400, detail="В папке нет изображений или текстовых файлов")
+        raise HTTPException(status_code=400, detail="В папке нет изображений, PDF или текстовых файлов")
     _start_job(job, items)
-    return {"job_id": job["id"], "images": len(paths), "documents": len(docs)}
+    return {"job_id": job["id"], "images": len(paths), "documents": len(docs), "pdf_pages": pdf_pages}
 
 
 @app.post("/api/scan/crawl")

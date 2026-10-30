@@ -1,8 +1,9 @@
-# MrRobotQR 2.0 — веб-панель для сканирования QR-кодов
+# WebCryptoScan — веб-панель для сканирования QR-кодов и поиска секретов
 
-Модернизированная версия сканера **MrRobotQR**: от связки bash-скриптов 2018 года
-(`qrcrawler.py` → `mrrobotqr.sh` → `qr2key.py`) до локальной веб-панели с каскадным
-распознаванием QR-кодов, офлайн-валидацией приватных ключей Bitcoin и BIP39 сид-фраз.
+Локальная веб-панель: каскадное распознавание QR-кодов, офлайн-валидация приватных
+ключей Bitcoin и BIP39 сид-фраз, мультивалютные адреса, краулер изображений и
+глобальный поиск по открытым источникам (веб-архивы, dork-запросы, Common Crawl,
+GitHub).
 
 > ⚠️ **Назначение.** Инструмент для исследований безопасности и демонстрации того, как
 > быстро публичные QR-коды с секретами находятся и вскрываются. Вся валидация выполняется
@@ -11,32 +12,51 @@
 
 ---
 
-## Что изменилось по сравнению с оригиналом (10MrRobotQR, 2018)
+## Возможности
 
-| Оригинал | MrRobotQR 2.0 |
-| --- | --- |
-| `zbarlight` (мёртв, не собирается на новых Python) | Каскад: **pyzbar → WeChatQRCode (CV-модель) → OpenCV QRCodeDetector** |
-| Один проход по исходной картинке | Препроцессинг: масштабирование, **CLAHE**, **бинаризация Отсу**, адаптивный порог — до 5 попыток на изображение |
-| Поиск только WIF-ключей по регулярокам | WIF (compressed/uncompressed), **mini-ключи Casascius**, **hex-ключи**, **BIP39 сид-фразы (12/15/18/21/24)** с проверкой контрольной суммы, **SeedQR (Compact + Standard)**, **Electrum старого формата (1626 слов)** |
-| `requests.get(blockchain.info)` — падает без retry | **Полностью офлайн**: Base58Check, bech32/bech32m, CashAddr, EIP-55, secp256k1 (свой BIP32-дериватор) |
-| Только Bitcoin P2PKH-адрес | **Мультивалютность**: **BTC (Legacy/P2SH/SegWit/Taproot), ETH (EIP-55), LTC, DOGE, DASH, BCH (CashAddr), XRP, TRX, SOL** — детект в QR + вывод адресов из ключей и сидов |
-| `keylist.txt` + `sort | uniq` | **keylist.txt, seedlist.txt, addresses.txt, scan_report.json, scan_report.csv** + веб-интерфейс с галереей |
-| Краулер на 3 поисковика одной пачкой | **9 поисковых систем** с пресетами и отчётом по каждой, плюс **парсер сайтов** с фолбэком на Wayback Machine |
-| Зависимости-пины 2022 года | Python 3.10+, актуальные версии, всё запускается одной командой |
+- **Каскад декодирования QR**: pyzbar → WeChatQRCode (CV-модель) → OpenCV
+  QRCodeDetector. Препроцессинг: масштабирование, **CLAHE**, **бинаризация Отсу**,
+  адаптивный порог — до 5 попыток на изображение.
+- **Детекторы секретов** (офлайн): WIF (compressed/uncompressed), mini-ключи
+  Casascius, hex-ключи, **BIP39 сид-фразы (12/15/18/21/24)** с проверкой контрольной
+  суммы, **SeedQR (Compact + Standard)**, **Electrum старого формата (1626 слов)**.
+- **Мультивалютность**: детект адресов **BTC (Legacy/P2SH/SegWit/Taproot), ETH
+  (EIP-55), LTC, DOGE, DASH, BCH (CashAddr), XRP, TRX, SOL**; вывод адресов из
+  найденных ключей и сидов (пути BIP44/84/86, собственный secp256k1 + BIP32).
+- **Вне QR-кодов**: OCR обычных фото (Tesseract), EXIF-метаданные, текстовые
+  файлы, печатаемые строки (strings), видимый текст страниц, **PDF: текст pypdf +
+  растеризация страниц в JPEG** (страницы уходят в QR-сканер; работает и для
+  загруженных файлов, и для папок, и для документов из глобального поиска).
+- **Краулер изображений**: 9 поисковых систем с пресетами, md5-дедупликация,
+  честные статусы по каждому движку.
+- **Парсер сайтов**: картинки со страницы; мёртвый сайт подхватывается из
+  Wayback Machine (режимы «авто / только архив / только прямая загрузка»).
+- **Глобальный поиск** (4 источника URL, универсальный загрузчик):
+  - **Архивы** — CDX-перечисление домена целиком (Wayback Machine / arquivo.pt);
+    режим **«дельта»**: запоминается граница времени домена, повторный проход
+    качает только новые снимки (без расписаний — только ручные запуски);
+  - **Dork-поиск** — пресеты открытых каталогов и файлов через текстовые SERP
+    (Bing, Marginalia, Baidu, DuckDuckGo), из листингов тянутся файлы;
+  - **Common Crawl** — публичный индекс по маске URL;
+  - **GitHub** — поиск кода по токену, raw-файлы идут в строковые детекторы.
+- **Отчёты**: `keylist.txt`, `seedlist.txt`, `addresses.txt`, `scan_report.json`,
+  `scan_report.csv` + веб-интерфейс с галереей и историей сканирований.
 
 ## Архитектура
 
 ```
 Браузер ── Caddy (XTransformPort) ──► Next.js 16 (:3000)  — интерфейс на русском
                                  └──► Python-сервис (:3031) — движок сканера
-                                       ├─ engine/decoder.py   каскад декодирования
-                                       ├─ engine/detectors.py WIF / mini / hex / BIP39 / SeedQR / Electrum / адреса
-                                       ├─ engine/bitcoin.py   офлайн-валидация ключей
-                                       ├─ engine/addresses.py мультивалютные адреса: детект + деривация
-                                       ├─ engine/crypto.py    secp256k1, BIP32, bech32/bech32m, CashAddr, EIP-55
-                                       ├─ engine/crawler.py   9 поисковых систем + пресеты
-                                       ├─ engine/sitespider.py парсер сайтов (+ Wayback)
-                                       ├─ engine/reports.py   TXT / JSON / CSV
+                                       ├─ engine/decoder.py     каскад декодирования
+                                       ├─ engine/detectors.py   WIF / mini / hex / BIP39 / SeedQR / Electrum / адреса
+                                       ├─ engine/bitcoin.py     офлайн-валидация ключей
+                                       ├─ engine/addresses.py   мультивалютные адреса: детект + деривация
+                                       ├─ engine/crypto.py      secp256k1, BIP32, bech32/bech32m, CashAddr, EIP-55
+                                       ├─ engine/textscan.py    OCR, EXIF, строки, PDF (текст + растеризация)
+                                       ├─ engine/crawler.py     9 поисковых систем + пресеты
+                                       ├─ engine/sitespider.py  парсер сайтов (+ Wayback)
+                                       ├─ engine/globalsearch.py архивы CDX (дельта), dorks, Common Crawl, GitHub
+                                       ├─ engine/reports.py     TXT / JSON / CSV
                                        └─ data/  словари BIP39 (2048) и Electrum legacy (1626)
 ```
 
@@ -44,13 +64,15 @@
   (`src/instrumentation.ts` + резервный роут `GET /api/scanner-boot`).
 - Джобы выполняются в фоновых потоках; прогресс, статистика и находки
   сохраняются в `mini-services/scanner-service/jobs/<id>/job.json`.
+- Для растеризации PDF нужен **poppler-utils** (`pdftoppm`); без него PDF
+  обрабатывается только текстом (pypdf).
 
 ## Запуск (локально)
 
 ```bash
 # 1. Системные зависимости
-sudo apt install libzbar0          # для pyzbar (Debian/Ubuntu)
-# macOS: brew install zbar
+sudo apt install libzbar0 poppler-utils   # pyzbar и растеризация PDF (Debian/Ubuntu)
+# macOS: brew install zbar poppler
 
 # 2. Python-зависимости движка
 python3 -m pip install -r mini-services/scanner-service/requirements.txt
@@ -63,36 +85,19 @@ npm run dev         # http://localhost:3000
 python3 mini-services/scanner-service/server.py   # порт 3031
 ```
 
-## Возможности интерфейса
+## Интерфейс
 
-- **Источники изображений**: загрузка файлов (drag&drop), папка на сервере
-  (например `qrbooty` от старого MrRobotQR), краулер по ключевым словам и
-  **парсер сайтов**: вводите адрес — движок собирает картинки со страницы;
-  мёртвый сайт подхватывается из Wayback Machine (режимы «авто / только архив /
-  только прямая загрузка»).
-- **Пресеты краулера**: `Bitcoin QR / бумажные кошельки`, `Сид-фразы (BIP39)`,
-  `Смешанный` — 8 запросов на пресет, **9 поисковых систем** (Google, Bing,
-  Baidu, 360 Поиск, Sogou, DuckDuckGo, Яндекс, Wikimedia Commons, Openverse),
-  регулировка числа фото. Ошибки и результат каждой поисковой системы
-  показываются отдельно: из дата-центров Google/Bing/Sogou/Яндекс/Wikimedia
-  часто блокируются, Baidu и 360 работают стабильно. Скачивание — с
-  md5-дедупликацией между движками и проверкой формата/размера.
-- **Настройки детекторов**: независимые переключатели WIF / BIP39 / **SeedQR
-  (Compact + Standard)** / **Electrum (старый формат)** / mini / hex /
-  **«Адреса и мультивалютность»**, тумблер улучшения изображений.
-- **Мультивалютность**: адреса в QR распознаются офлайн с проверкой контрольных
-  сумм (Base58Check, bech32/bech32m, CashAddr, EIP-55, алфавит Ripple). Для
-  каждого найденного ключа (WIF/mini/hex) выводятся адреса **BTC (Legacy
-  compressed/uncompressed, Taproot), LTC, DOGE, DASH, ETH**; для валидных
-  BIP39/SeedQR-фраз — стандартные адреса по путям BIP44/BIP84/BIP86: BTC
-  Legacy / SegWit / Taproot, LTC, LTC SegWit, DOGE, DASH, ETH. В таблице
-  находок адреса свёрнуты («ещё N сетей…»), есть отдельный фильтр «Адреса».
+- **Источники**: загрузка файлов (drag&drop, включая PDF), папка на сервере,
+  краулер по ключевым словам, парсер сайтов, вкладка **«Глобально»**
+  (Архивы / Dork-поиск / Common Crawl / GitHub).
+- **Режим «Архивы»**: домен целиком из веб-архива, выбор провайдера, лимит URL,
+  галочка **«Только новое (дельта)»** с панелью последнего прохода (дата, число
+  снимков, охват) и сбросом дельты.
+- **Настройки детекторов**: независимые переключатели WIF / BIP39 / SeedQR /
+  Electrum / mini / hex / «Адреса и мультивалютность», тумблер улучшения
+  изображений, OCR и строковый анализ.
 - **Результаты**: прогресс в реальном времени, счётчики, таблица находок
-  с копированием значений и адресов, галерея изображений с рамками вокруг QR
-  и деталями по клику, история сканирований.
-- **Отчёты**: `keylist.txt` (как в оригинале), `seedlist.txt`,
-  `addresses.txt` (мультивалютные адреса с указанием источника),
-  `scan_report.json`, `scan_report.csv`.
+  с копированием значений и адресов, галерея с рамками вокруг QR, история.
 
 ## API Python-сервиса (порт 3031)
 
@@ -100,10 +105,13 @@ python3 mini-services/scanner-service/server.py   # порт 3031
 | --- | --- | --- |
 | GET | `/api/health` | состояние сервиса и движков |
 | GET | `/api/presets` | пресеты ключевых слов |
-| POST | `/api/scan/upload` | multipart: файлы + options |
-| POST | `/api/scan/folder` | `{path, options}` |
-| POST | `/api/scan/crawl` | `{preset|keyword, engines[], max_num, options}` |
+| POST | `/api/scan/upload` | multipart: файлы + options (PDF → страницы в QR-сканер) |
+| POST | `/api/scan/folder` | `{path, options}` (PDF в папке растеризуются) |
+| POST | `/api/scan/crawl` | `{preset\|keyword, engines[], max_num, options}` |
 | POST | `/api/scan/site` | `{url, archive: auto\|yes\|no, max_num, options}` |
+| POST | `/api/scan/global` | `{mode: archive\|dorks\|commoncrawl\|github, ...}` |
+| GET | `/api/global/presets` | пресеты dork-запросов и GitHub-поиска |
+| GET/DELETE | `/api/global/state?domain=` | дельта-состояние домена / сброс |
 | GET | `/api/jobs` | список джоб |
 | GET | `/api/jobs/{id}` | статус, прогресс, статистика, находки |
 | DELETE | `/api/jobs/{id}` | удалить джобу |
@@ -125,13 +133,12 @@ python3 mini-services/scanner-service/server.py   # порт 3031
   43–44 символов Base58 без checksum (помечается «вероятный»). Деривация из
   ключей и сидов — собственный secp256k1 + BIP32 (без внешних зависимостей),
   пути BIP44/84/86. Все проверки выполняются офлайн.
-- Тесты: `python3 tools/test_addresses.py` — известные векторы (privkey=1,
-  BIP39 «abandon ×11 about», EIP-55, BIP173/350, CashAddr).
 
-## Кредиты
+## Тесты
 
-- Оригинальный скрипт: Marco Zollinger (MIT, 2018), кейс «CRYPTO DEEP TECH» / demining.
-- Модернизация 2.0: веб-панель, каскад декодирования, детекторы, отчёты.
-- Словарь BIP39: bitcoin/bips (bip-0039/english.txt).
+```bash
+python3 tools/test_addresses.py    # векторы: privkey=1, BIP39 «abandon ×11 about», EIP-55, BIP173/350, CashAddr
+python3 tools/gen_test_qr.py       # генерация тестовых QR и проверка движка
+```
 
 Лицензия: MIT.

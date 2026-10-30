@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MrRobotQR 2.0 — краулер изображений: 9 поисковых систем.
+WebCryptoScan — краулер изображений: 9 поисковых систем.
 
 Движки:
   icrawler (встроенные) : Google, Bing, Baidu
@@ -89,7 +89,7 @@ _UA = (
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 _HEADERS = {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"}
-_WIKI_UA = "MrRobotQR/2.0 (offline QR scanner; https://github.com/matbar14/MrRobotQR-2.0)"
+_WIKI_UA = "WebCryptoScan/1.0 (offline QR scanner; https://github.com/matbar14/WebCryptoScan)"
 _HTTP_TIMEOUT = 15
 _MIN_BYTES = 3072          # меньше 3 КБ — мусор
 _MIN_SIDE = 120            # меньшая сторона < 120 px — бесполезна для декодера

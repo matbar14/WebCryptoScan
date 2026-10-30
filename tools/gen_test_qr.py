@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Генерация тестовых изображений с QR-кодами + проверка движка MrRobotQR 2.0."""
+"""Генерация тестовых изображений с QR-кодами + проверка движка WebCryptoScan."""
 import hashlib
 import random
 import sys

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MrRobotQR 2.0 — отчёты по результатам сканирования.
+WebCryptoScan — отчёты по результатам сканирования.
 
   keylist.txt       — уникальные приватные ключи (WIF/mini/hex), формат оригинала
   seedlist.txt      — уникальные BIP39 сид-фразы
@@ -63,7 +63,7 @@ def _unique_by_value(findings: list[dict]) -> list[dict]:
 def write_reports(job: dict, job_dir: Path) -> dict:
     findings = job.get("findings", [])
 
-    # --- keylist.txt: только приватные ключи (как в оригинальном MrRobotQR) ---
+    # --- keylist.txt: только приватные ключи ---
     keys = _unique_by_value([f for f in findings if f.get("type") in KEY_TYPES])
     (job_dir / "keylist.txt").write_text("".join(f["value"] + "\n" for f in keys), encoding="utf-8")
 

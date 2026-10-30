@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MrRobotQR 2.0 — поиск секретов ВНЕ QR-кодов: обычные фото и строковые значения.
+WebCryptoScan — поиск секретов ВНЕ QR-кодов: обычные фото и строковые значения.
 
 Источники текста (все прогоняются через общий analyze_text() — детекторы ключей,
 сидов и мультивалютная деривация адресов работают без изменений):
@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import html as html_mod
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 from PIL import Image
@@ -47,6 +50,14 @@ MAX_PAGE_TEXT = 300_000                # видимый текст страни�
 MAX_OCR_SIDE = 2000                    # ограничение стороны для OCR
 MIN_OCR_SIDE = 800                     # мелкие изображения увеличиваем
 OCR_LANG = "eng"
+
+# --- PDF: текст и растеризация страниц в картинки для QR-сканера -------------------
+
+PDF_TEXT_MAX_PAGES = 50                 # страниц текста с одного PDF — максимум
+PDF_TEXT_MAX = 300_000                  # символов текста с одного PDF
+PDF_RASTER_MAX_PAGES = 10               # страниц на растеризацию с одного PDF
+PDF_RASTER_DPI = 130                    # баланс размер/читаемость QR
+PDF_RASTER_MAX_BYTES = 50 * 1024 * 1024  # PDF больше 50 МБ не растеризуем
 
 # EXIF-теги с потенциально интересным текстом (id -> человекочитаемое имя)
 _EXIF_TEXT_TAGS = {
@@ -136,6 +147,78 @@ def strings_from_bytes(data: bytes, min_len: int = STRINGS_MIN_LEN) -> list[str]
     return out
 
 
+# --- PDF: текст и растеризация -----------------------------------------------------
+
+def pdf_text(data: bytes) -> str:
+    """Текст PDF через pypdf (первые PDF_TEXT_MAX_PAGES страниц)."""
+    try:
+        import io
+
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        parts: list[str] = []
+        for page in reader.pages[:PDF_TEXT_MAX_PAGES]:
+            try:
+                parts.append(page.extract_text() or "")
+            except Exception:  # noqa: BLE001 — битая страница не ломает документ
+                continue
+        return "\n".join(parts)[:PDF_TEXT_MAX]
+    except Exception:  # noqa: BLE001 — pypdf не установлен или файл не pdf
+        return ""
+
+
+def pdf_rasterize(data: bytes, out_dir: str | Path, base: str,
+                  max_pages: int = PDF_RASTER_MAX_PAGES,
+                  dpi: int = PDF_RASTER_DPI) -> list[Path]:
+    """Растеризует первые страницы PDF в JPEG через pdftoppm (poppler).
+
+    Возвращает пути к страницам (отсортированы); [] — если poppler недоступен,
+    PDF пустой/битый или превышен лимит размера. Страницы сохраняются как
+    f"{base}_p{N:02d}.jpg" в out_dir.
+    """
+    out_dir = Path(out_dir)
+    if not data or len(data) > PDF_RASTER_MAX_BYTES or not out_dir.exists():
+        return []
+    if shutil.which("pdftoppm") is None:
+        return []
+    max_pages = max(1, min(int(max_pages), 50))
+    prefix = out_dir / "_pdfraster"
+    tmp_pdf = out_dir / "_pdfraster_src.pdf"
+    try:
+        tmp_pdf.write_bytes(data)
+        try:
+            subprocess.run(
+                ["pdftoppm", "-r", str(dpi), "-f", "1", "-l", str(max_pages),
+                 "-jpeg", "-jpegopt", "quality=80", str(tmp_pdf), str(prefix)],
+                timeout=120,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return []
+        pages = sorted(p for p in out_dir.glob("_pdfraster-*.jpg"))
+        out: list[Path] = []
+        for i, src in enumerate(pages, 1):
+            dst = out_dir / f"{base}_p{i:02d}.jpg"
+            src.replace(dst)
+            out.append(dst)
+        return out
+    finally:
+        try:
+            tmp_pdf.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def pdf_raster_bytes(data: bytes, max_pages: int = PDF_RASTER_MAX_PAGES,
+                     dpi: int = PDF_RASTER_DPI) -> list[bytes]:
+    """То же, что pdf_rasterize, но возвращает байты страниц (для конвейера загрузок)."""
+    with tempfile.TemporaryDirectory() as td:
+        return [p.read_bytes() for p in pdf_rasterize(data, td, "pg", max_pages, dpi)]
+
+
 def file_text_chunks(path: str | Path) -> list[tuple[str, str]]:
     """Читает файл как источник текста. Возвращает [(метка, текст), ...].
 
@@ -144,6 +227,21 @@ def file_text_chunks(path: str | Path) -> list[tuple[str, str]]:
     p = Path(path)
     size = p.stat().st_size
     chunks: list[tuple[str, str]] = []
+
+    # PDF: сначала текст (pypdf) — строки из бинарного pdf почти всегда мусор
+    if p.suffix.lower() == ".pdf":
+        if size <= PDF_RASTER_MAX_BYTES:
+            text = pdf_text(p.read_bytes())
+            if text:
+                if len(text) <= TEXT_CHUNK:
+                    chunks.append(("pdf-text", text))
+                else:
+                    i, n = 0, 0
+                    while i < len(text) and n < 10:
+                        chunks.append((f"pdf-text#{n + 1}", text[i : i + TEXT_CHUNK]))
+                        i += TEXT_CHUNK - TEXT_CHUNK_OVERLAP
+                        n += 1
+        return chunks
 
     if is_text_file(p.name):
         if size > MAX_TEXT_FILE:

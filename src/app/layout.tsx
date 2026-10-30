@@ -14,22 +14,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MrRobotQR 2.0 — сканер QR-кодов: ключи и сид-фразы",
+  title: "WebCryptoScan — сканер QR-кодов: ключи и сид-фразы",
   description:
-    "Модернизированный веб-сканер MrRobotQR: каскадное декодирование QR-кодов (pyzbar, WeChatQRCode, OpenCV), офлайн-валидация приватных ключей, BIP39 сид-фраз и мультивалютных адресов (BTC, ETH, LTC, DOGE, DASH, BCH, XRP, TRX, SOL), отчёты TXT/JSON/CSV.",
-  keywords: ["MrRobotQR", "QR", "Bitcoin", "BIP39", "seed phrase", "WIF", "security research"],
+    "Веб-сканер WebCryptoScan: каскадное декодирование QR-кодов (pyzbar, WeChatQRCode, OpenCV), офлайн-валидация приватных ключей, BIP39 сид-фраз и мультивалютных адресов (BTC, ETH, LTC, DOGE, DASH, BCH, XRP, TRX, SOL), отчёты TXT/JSON/CSV.",
+  keywords: ["WebCryptoScan", "QR", "Bitcoin", "BIP39", "seed phrase", "WIF", "security research"],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
   openGraph: {
-    title: "MrRobotQR 2.0 — сканер QR-кодов",
+    title: "WebCryptoScan — сканер QR-кодов",
     description: "Каскадное декодирование QR-кодов, офлайн-валидация приватных ключей и сид-фраз",
-    siteName: "MrRobotQR 2.0",
+    siteName: "WebCryptoScan",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "MrRobotQR 2.0 — сканер QR-кодов",
+    title: "WebCryptoScan — сканер QR-кодов",
     description: "Каскадное декодирование QR-кодов, офлайн-валидация ключей и сид-фраз",
   },
 };

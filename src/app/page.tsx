@@ -201,7 +201,7 @@ export default function Home() {
           </div>
           <div className="min-w-0">
             <h1 className="text-base font-semibold leading-tight">
-              MrRobotQR <span className="text-emerald-400">2.0</span>
+              WebCrypto<span className="text-emerald-400">Scan</span>
             </h1>
             <p className="hidden text-xs text-zinc-500 sm:block">
               Ключи, сид-фразы и адреса: BTC, ETH, LTC, DOGE, DASH, BCH, XRP, TRX, SOL · оффлайн-валидация
@@ -349,7 +349,7 @@ export default function Home() {
         <div className="mx-auto w-full max-w-6xl px-4 py-4 text-xs text-zinc-600">
           <Separator className="mb-4 bg-zinc-800/60" />
           <p>
-            MrRobotQR 2.0 — модернизированный сканер (каскад pyzbar → WeChatQRCode → OpenCV + препроцессинг).
+            WebCryptoScan — сканер с каскадом pyzbar → WeChatQRCode → OpenCV + препроцессинг.
             Предназначен для исследований безопасности: демонстрирует, как быстро публичные QR-коды с секретами
             находятся и вскрываются. Валидация ключей и адресов выполняется полностью офлайн.
           </p>

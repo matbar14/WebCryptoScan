@@ -207,7 +207,7 @@ export function SourcePanel({
             </Button>
           </div>
           <p className="text-xs text-zinc-500">
-            Например, папка <code className="text-zinc-400">qrbooty</code> от старого MrRobotQR или любой каталог с JPG/PNG.
+            Например, папка с выгрузкой изображений или любой каталог с JPG/PNG.
           </p>
         </div>
       </TabsContent>
@@ -401,8 +401,8 @@ export function SourcePanel({
                 </SelectContent>
               </Select>
               <p className="text-xs text-zinc-500">
-                CDX API перечисляет все сохранённые снимки домена: картинки уйдут в сканер QR,
-                страницы и файлы — в детекторы строк. arquivo.pt работает с серверных IP, но глубоко
+                CDX API перечисляет все сохранённые снимки домена: картинки и страницы PDF уйдут
+                в сканер QR, страницы и файлы — в детекторы строк. arquivo.pt работает с серверных IP, но глубоко
                 индексирует только португальский веб; полный охват — Wayback на локальной машине.
               </p>
             </div>
