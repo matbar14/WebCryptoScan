@@ -146,6 +146,7 @@ export default function Home() {
       mode: GlobalMode;
       domain?: string;
       provider?: "auto" | "wayback" | "arquivo";
+      delta?: boolean;
       mask?: string;
       presets?: string[];
       custom?: string;

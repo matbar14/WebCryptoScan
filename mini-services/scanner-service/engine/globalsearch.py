@@ -27,7 +27,9 @@ import base64
 import io
 import json
 import re
+import threading
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, unquote, urljoin, urlparse
 
@@ -59,6 +61,104 @@ _ARQUIVO_REPLAY = "https://arquivo.pt/noFrame/replay/{ts}id_/{url}"
 _WAYBACK_REPLAY = "https://web.archive.org/web/{ts}id_/{url}"
 
 _UA = _HEADERS["User-Agent"]
+
+# --- Дельта-состояние доменов ---------------------------------------------------------
+#
+# Чтобы повторный проход по тому же домену не шёл по кругу, после успешного
+# перечисления CDX запоминаем границу времени: самый старый снимок, который
+# реально ушёл в загрузку. Следующий дельта-проход спрашивает у архива только
+# снимки, сделанные ПОСЛЕ этой границы (параметр from= у CDX API).
+# Никаких расписаний и автозапусков — только ручные запуски пользователя.
+
+STATE_FILE = Path(__file__).resolve().parent.parent / "data" / "global_state.json"
+_STATE_LOCK = threading.Lock()
+
+
+def _domain_key(domain: str) -> str:
+    """Нормализуем запись домена до ключа состояния: без схемы, слешей и '/*'."""
+    dom = (domain or "").strip().lower()
+    dom = re.sub(r"^[a-z][a-z0-9+.-]*://", "", dom)
+    dom = dom.rstrip("/")
+    if dom.endswith("/*"):
+        dom = dom[:-2]
+    return dom.strip()
+
+
+def _load_state() -> dict:
+    try:
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("domains"), dict):
+            return data
+    except Exception:  # noqa: BLE001 — файла нет или битый JSON: начинаем с пустого
+        pass
+    return {"domains": {}}
+
+
+def _save_state(state: dict) -> None:
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(STATE_FILE)
+    except OSError:
+        pass
+
+
+def get_domain_state(domain: str) -> dict | None:
+    """Сохранённое дельта-состояние домена или None."""
+    st = _load_state()["domains"].get(_domain_key(domain))
+    return dict(st) if isinstance(st, dict) and st else None
+
+
+def reset_domain_state(domain: str) -> bool:
+    """Сброс дельты: следующий проход снова пойдёт по всему домену."""
+    with _STATE_LOCK:
+        state = _load_state()
+        key = _domain_key(domain)
+        if key in state["domains"]:
+            del state["domains"][key]
+            _save_state(state)
+            return True
+    return False
+
+
+def _ts_plus_second(ts: str) -> str:
+    """CDX from= включителен — сдвигаем границу на секунду, чтобы пограничный
+    снимок не качался заново при каждом дельта-проходе."""
+    s = str(ts)[:14]
+    try:
+        dt = datetime.strptime(s, "%Y%m%d%H%M%S") + timedelta(seconds=1)
+        return dt.strftime("%Y%m%d%H%M%S")
+    except ValueError:
+        return str(ts)
+
+
+def _record_domain_state(domain: str, *, provider: str, items: list[dict],
+                         queued_ts: list[str], max_urls: int) -> dict:
+    """Записывает границу дельты после успешного перечисления CDX.
+
+    Граница — самый старый снимок из реально ушедших в загрузку; complete —
+    уложились ли перечисленные снимки в лимит URL (иначе старые не охвачены).
+    """
+    with _STATE_LOCK:
+        state = _load_state()
+        boundary = ""
+        if queued_ts:
+            boundary = min(str(t)[:14] for t in queued_ts)
+        elif items:
+            boundary = max(str(i.get("ts", ""))[:14] for i in items if i.get("ts"))
+        rec = {
+            "last_ts": boundary,
+            "next_from": _ts_plus_second(boundary) if boundary else "",
+            "last_run": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "provider": provider,
+            "last_count": len(items),
+            "complete": len(items) <= max_urls,
+        }
+        if boundary:
+            state["domains"][_domain_key(domain)] = rec
+            _save_state(state)
+        return rec
 
 
 def _get(url: str, *, params: dict | None = None, headers: dict | None = None,
@@ -366,17 +466,20 @@ def _fetch_item(url: str, store: _Store, *, timeout: tuple[float, float] = (12, 
 
 # --- Режим archive: CDX-перечисление домена -------------------------------------------
 
-def _cdx_wayback(domain: str, limit: int) -> dict:
+def _cdx_wayback(domain: str, limit: int, from_ts: str = "") -> dict:
+    params = {
+        "url": domain,
+        "output": "json",
+        "fl": "original,timestamp,mimetype,statuscode",
+        "collapse": "urlkey",
+        "filter": "statuscode:200",
+        "limit": str(limit),
+    }
+    if from_ts:
+        params["from"] = str(from_ts)
     r = _get(
         "https://web.archive.org/cdx/search/cdx",
-        params={
-            "url": domain,
-            "output": "json",
-            "fl": "original,timestamp,mimetype,statuscode",
-            "collapse": "urlkey",
-            "filter": "statuscode:200",
-            "limit": str(limit),
-        },
+        params=params,
         timeout=(12, 45),
     )
     r.raise_for_status()
@@ -395,10 +498,13 @@ def _cdx_wayback(domain: str, limit: int) -> dict:
     return {"provider": "wayback", "items": items}
 
 
-def _cdx_arquivo(domain: str, limit: int) -> dict:
+def _cdx_arquivo(domain: str, limit: int, from_ts: str = "") -> dict:
+    params = {"url": domain, "output": "json", "filter": "statuscode:200", "limit": str(limit)}
+    if from_ts:
+        params["from"] = str(from_ts)
     r = _get(
         "https://arquivo.pt/wayback/cdx",
-        params={"url": domain, "output": "json", "filter": "statuscode:200", "limit": str(limit)},
+        params=params,
         timeout=(12, 45),
     )
     r.raise_for_status()
@@ -416,8 +522,12 @@ def _cdx_arquivo(domain: str, limit: int) -> dict:
     return {"provider": "arquivo", "items": items}
 
 
-def cdx_domain(domain: str, limit: int, provider: str = "auto") -> dict:
-    """Перечисляет захваченные URL домена через CDX. Провайдеры: wayback, arquivo, auto."""
+def cdx_domain(domain: str, limit: int, provider: str = "auto", from_ts: str = "") -> dict:
+    """Перечисляет захваченные URL домена через CDX.
+
+    Провайдеры: wayback, arquivo, auto. from_ts — граница дельты (YYYYMMDDhhmmss):
+    возвращаются только снимки, сделанные после неё.
+    """
     dom = domain.strip()
     dom = re.sub(r"^[a-z][a-z0-9+.-]*://", "", dom, flags=re.I).strip("/")
     if not dom or "/" not in dom and "*" not in dom:
@@ -434,7 +544,7 @@ def cdx_domain(domain: str, limit: int, provider: str = "auto") -> dict:
     last_err = ""
     for name, fn in order:
         try:
-            res = fn(dom, limit)
+            res = fn(dom, limit, from_ts)
             items = [i for i in res["items"] if i["url"] and str(i["status"]) == "200"]
             # дедуп по URL (оставляем самый свежий снимок)
             best: dict[str, dict] = {}
@@ -743,13 +853,31 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
         domain = str(params.get("domain", "")).strip()
         provider = str(params.get("provider", "auto") or "auto")
         max_urls = max(5, min(int(params.get("max_urls", 60)), 400))
+        delta = bool(params.get("delta"))
+
+        from_ts = ""
+        prev: dict | None = None
+        if delta:
+            prev = get_domain_state(domain)
+            if prev and prev.get("next_from"):
+                from_ts = str(prev["next_from"])
+
         prog("Перечисление снимков веб-архива…", 0, 1)
-        res = cdx_domain(domain, max_urls * 3, provider)
+        res = cdx_domain(domain, max_urls * 3, provider, from_ts=from_ts)
         items = res["items"]
         result["sources"]["cdx"] = {
-            "count": len(items), "provider": res["provider"], "error": res["error"], "note": res.get("note"),
-            "note": None if res["provider"] else "web.archive.org и arquivo.pt недоступны с этого сервера; на локальной машине обычно работает",
+            "count": len(items), "provider": res["provider"], "error": res["error"],
+            "note": res.get("note") or (
+                None if res["provider"] else
+                "web.archive.org и arquivo.pt недоступны с этого сервера; на локальной машине обычно работает"),
         }
+        if delta:
+            result["sources"]["cdx"]["delta"] = {
+                "enabled": True,
+                "from_ts": from_ts or None,
+                "prev_run": (prev or {}).get("last_run"),
+                "prev_count": (prev or {}).get("last_count"),
+            }
         if items:
             split: dict[str, list[dict]] = {"image": [], "page": [], "doc": []}
             for it in items:
@@ -760,12 +888,24 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
             result["sources"]["cdx"]["pages_found"] = len(split["page"])
             result["sources"]["cdx"]["docs_found"] = len(split["doc"])
             queue = (split["image"] + split["doc"] + split["page"])[:max_urls]
+            # граница дельты пишется сразу после перечисления: загрузки могут
+            # длиться долго, а перечисленный охват от этого не меняется
+            if res["provider"]:
+                result["sources"]["cdx"]["delta_state"] = _record_domain_state(
+                    domain, provider=res["provider"], items=items,
+                    queued_ts=[str(i.get("ts", "")) for i in queue if i.get("ts")],
+                    max_urls=max_urls,
+                )
             done = 0
             for it in queue:
                 _fetch_item(_replay_url(res["provider"] or "arquivo", it), store)
                 done += 1
                 if done % 5 == 0 or done == len(queue):
                     prog(f"Загрузка из архива: {done}/{len(queue)}", done, len(queue))
+        elif delta and from_ts and res["provider"]:
+            result["sources"]["cdx"]["note"] = (
+                "новых снимков с последнего прохода не найдено — домен уже охвачен"
+            )
 
     elif mode == "dorks":
         engines = [e for e in (params.get("engines") or ["bing"]) if e in SERPS] or ["bing"]

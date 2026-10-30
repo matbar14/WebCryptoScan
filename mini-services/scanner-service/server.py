@@ -38,7 +38,14 @@ from engine.crawler import ENGINE_NAMES, IMAGE_EXTS, PRESETS, collect_image_path
 from engine.decoder import decode_image, open_image
 from engine.detectors import analyze_bytes, analyze_text, get_bip39
 from engine.addresses import attach_addresses
-from engine.globalsearch import DORK_ENGINE_LABELS, DORK_PRESETS, GITHUB_PRESETS, run_global
+from engine.globalsearch import (
+    DORK_ENGINE_LABELS,
+    DORK_PRESETS,
+    GITHUB_PRESETS,
+    get_domain_state,
+    reset_domain_state,
+    run_global,
+)
 from engine.reports import write_reports
 from engine.sitespider import parse_site
 from engine.textscan import (
@@ -682,6 +689,24 @@ def global_presets():
     }
 
 
+@app.get("/api/global/state")
+def global_state_get(domain: str = ""):
+    """Дельта-состояние домена: граница времени последнего прохода архива."""
+    domain = domain.strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="Укажите домен")
+    return {"domain": domain, "state": get_domain_state(domain)}
+
+
+@app.delete("/api/global/state")
+def global_state_reset(domain: str = ""):
+    """Сброс дельты: следующий проход снова перечислит домен целиком."""
+    domain = domain.strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="Укажите домен")
+    return {"domain": domain, "reset": reset_domain_state(domain)}
+
+
 @app.post("/api/scan/global")
 def scan_global(body: dict):
     mode = str(body.get("mode", "") or "").strip()
@@ -697,9 +722,11 @@ def scan_global(body: dict):
         provider = str(body.get("provider", "auto") or "auto")
         if provider not in ("auto", "wayback", "arquivo"):
             raise HTTPException(status_code=400, detail="provider: auto | wayback | arquivo")
-        params.update(domain=domain, provider=provider,
-                      max_num=int(body.get("max_urls", 60)))
-        label = f"Архивы: {domain}"
+        delta = bool(body.get("delta", False))
+        # run_global читает max_urls (не max_num) — иначе слайдер лимита не действует
+        params.update(domain=domain, provider=provider, delta=delta,
+                      max_urls=max(5, min(int(body.get("max_urls", 60)), 400)))
+        label = f"Архивы: {domain}" + (" — дельта" if delta else "")
     elif mode == "dorks":
         presets = [p for p in (body.get("presets") or []) if p in DORK_PRESETS]
         custom = str(body.get("custom", "") or "").strip()
@@ -716,7 +743,7 @@ def scan_global(body: dict):
         mask = str(body.get("mask", "") or "").strip()
         if not mask:
             raise HTTPException(status_code=400, detail="Укажите маску URL (например, example.com/*)")
-        params.update(mask=mask, max_num=int(body.get("max_urls", 60)))
+        params.update(mask=mask, max_urls=max(5, min(int(body.get("max_urls", 60)), 400)))
         label = f"Common Crawl: {mask}"
     else:  # github
         presets = [p for p in (body.get("presets") or []) if p in GITHUB_PRESETS]

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Archive, Database, FileSearch, FolderOpen, Globe, Github, Link2, Loader2, Radar, Search, Sparkles } from "lucide-react";
+import { Archive, Database, FileSearch, FolderOpen, Globe, Github, Link2, Loader2, Radar, RotateCcw, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,10 +10,23 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getGlobalPresets, getPresets, type GlobalMode, type GlobalPresets, type Preset } from "@/lib/scanner-api";
+import { getGlobalPresets, getGlobalState, getPresets, resetGlobalState, type GlobalDomainState, type GlobalMode, type GlobalPresets, type Preset } from "@/lib/scanner-api";
 import { UploadZone } from "./upload-zone";
 
 export type SourceTab = "upload" | "folder" | "crawl" | "site" | "global";
+
+function fmtStateDate(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 const GLOBAL_MODES: { id: GlobalMode; label: string; icon: typeof Archive; hint: string }[] = [
   { id: "archive", label: "Архивы", icon: Archive, hint: "домен целиком из веб-архива" },
@@ -55,6 +68,7 @@ export function SourcePanel({
     mode: GlobalMode;
     domain?: string;
     provider?: "auto" | "wayback" | "arquivo";
+    delta?: boolean;
     mask?: string;
     presets?: string[];
     custom?: string;
@@ -80,6 +94,8 @@ export function SourcePanel({
   const [gPresets, setGPresets] = useState<GlobalPresets | null>(null);
   const [gDomain, setGDomain] = useState("");
   const [gProvider, setGProvider] = useState<"auto" | "wayback" | "arquivo">("auto");
+  const [gDelta, setGDelta] = useState(false);
+  const [gDomState, setGDomState] = useState<GlobalDomainState | null>(null);
   const [gMask, setGMask] = useState("");
   const [gDorkPresets, setGDorkPresets] = useState<string[]>(["open_dirs"]);
   const [gGhPresets, setGGhPresets] = useState<string[]>(["wallet_files"]);
@@ -99,6 +115,22 @@ export function SourcePanel({
       .catch(() => setGPresets(null));
   }, []);
 
+  // дельта-состояние домена: подтягиваем с задержкой при вводе и после джобы
+  useEffect(() => {
+    if (gMode !== "archive") return;
+    const dom = gDomain.trim();
+    if (!dom) {
+      setGDomState(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      getGlobalState(dom)
+        .then((r) => setGDomState(r.state))
+        .catch(() => setGDomState(null));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [gMode, gDomain, busy]);
+
   const toggleEngine = (e: string) =>
     setEngines((prev) => (prev.includes(e) ? prev.filter((x) => x !== e) : [...prev, e]));
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<string[]>>, v: string) =>
@@ -117,7 +149,7 @@ export function SourcePanel({
 
   const startGlobal = () => {
     if (gMode === "archive") {
-      onGlobal({ mode: "archive", domain: gDomain.trim(), provider: gProvider, max_urls: gMaxUrls });
+      onGlobal({ mode: "archive", domain: gDomain.trim(), provider: gProvider, delta: gDelta, max_urls: gMaxUrls });
     } else if (gMode === "dorks") {
       onGlobal({ mode: "dorks", presets: gDorkPresets, custom: gCustom.trim(), engines: gEngines, max_pages: gMaxPages, max_files: gMaxFiles });
     } else if (gMode === "commoncrawl") {
@@ -374,6 +406,45 @@ export function SourcePanel({
                 индексирует только португальский веб; полный охват — Wayback на локальной машине.
               </p>
             </div>
+
+            {/* дельта: не проходить по кругу */}
+            <label className="flex items-start gap-2 text-sm text-zinc-300 cursor-pointer">
+              <Checkbox checked={gDelta} onCheckedChange={(v) => setGDelta(v === true)} disabled={busy} className="mt-0.5" />
+              <span>
+                Только новое (дельта)
+                <span className="ml-1 text-[10px] text-zinc-600">
+                  пропускать снимки, уже скачанные в прошлый раз
+                </span>
+              </span>
+            </label>
+
+            {gDomState && (
+              <div className="rounded-md border border-zinc-800 bg-zinc-950/60 p-2.5 text-xs text-zinc-400 space-y-1">
+                <div>
+                  Последний проход: <span className="text-zinc-200">{fmtStateDate(gDomState.last_run) || "неизвестно"}</span>
+                  {" · "}снимков: <span className="text-zinc-200">{gDomState.last_count ?? "?"}</span>
+                  {gDomState.provider && <> · архив: <span className="text-zinc-200">{gDomState.provider}</span></>}
+                </div>
+                <div>
+                  {gDomState.complete
+                    ? "Домен охвачен целиком — дельта возьмёт только новые снимки."
+                    : "Домен больше лимита URL: старые снимки остались вне прохода (увеличьте «Максимум URL» для полного охвата)."}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    resetGlobalState(gDomain.trim())
+                      .then(() => setGDomState(null))
+                      .catch(() => undefined)
+                  }
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 text-[11px] text-zinc-500 hover:text-amber-400 transition-colors disabled:opacity-50"
+                >
+                  <RotateCcw className="h-3 w-3" aria-hidden />
+                  Сбросить дельту (в следующий раз пройти всё заново)
+                </button>
+              </div>
+            )}
             <div className="space-y-2">
               <Label className="text-zinc-300">Максимум URL: {gMaxUrls}</Label>
               <Slider value={[gMaxUrls]} min={10} max={400} step={10} onValueChange={(v) => setGMaxUrls(v[0])} disabled={busy} />

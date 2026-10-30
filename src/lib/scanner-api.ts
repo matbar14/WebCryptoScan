@@ -228,11 +228,40 @@ export async function getGlobalPresets(): Promise<GlobalPresets> {
   return handle<GlobalPresets>(res);
 }
 
+// дельта-состояние домена (режим «Архивы»): граница времени последнего прохода
+export interface GlobalDomainState {
+  last_ts?: string;
+  next_from?: string;
+  last_run?: string;
+  provider?: string;
+  last_count?: number;
+  complete?: boolean;
+}
+
+export async function getGlobalState(
+  domain: string,
+): Promise<{ domain: string; state: GlobalDomainState | null }> {
+  const res = await fetch(apiUrl(`global/state?domain=${encodeURIComponent(domain)}`), {
+    cache: "no-store",
+  });
+  return handle<{ domain: string; state: GlobalDomainState | null }>(res);
+}
+
+export async function resetGlobalState(
+  domain: string,
+): Promise<{ domain: string; reset: boolean }> {
+  const res = await fetch(apiUrl(`global/state?domain=${encodeURIComponent(domain)}`), {
+    method: "DELETE",
+  });
+  return handle<{ domain: string; reset: boolean }>(res);
+}
+
 export async function scanGlobal(params: {
   mode: GlobalMode;
   options: ScanOptions;
   domain?: string;
   provider?: "auto" | "wayback" | "arquivo";
+  delta?: boolean;
   mask?: string;
   presets?: string[];
   custom?: string;

@@ -28,3 +28,6 @@ testdata/
 Thumbs.db
 .idea/
 .vscode/
+
+# --- Delta state (runtime) ---
+mini-services/scanner-service/data/
