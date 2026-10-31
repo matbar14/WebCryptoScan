@@ -19,7 +19,11 @@ export const metadata: Metadata = {
     "Веб-сканер WebCryptoScan: каскадное декодирование QR-кодов (pyzbar, WeChatQRCode, OpenCV), офлайн-валидация приватных ключей, BIP39 сид-фраз и мультивалютных адресов (BTC, ETH, LTC, DOGE, DASH, BCH, XRP, TRX, SOL), отчёты TXT/JSON/CSV.",
   keywords: ["WebCryptoScan", "QR", "Bitcoin", "BIP39", "seed phrase", "WIF", "security research"],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: [
+      { url: "/logo.svg", type: "image/svg+xml" },
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
   },
   openGraph: {
     title: "WebCryptoScan — сканер QR-кодов",
