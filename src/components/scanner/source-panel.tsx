@@ -128,7 +128,7 @@ export function SourcePanel({
   const [gIoKeywords, setGIoKeywords] = useState("");
   const [gIoListings, setGIoListings] = useState(15);
   const [gHidUrls, setGHidUrls] = useState("");
-  const [gHidKeysOnly, setGHidKeysOnly] = useState(true); // цель: hex и WIF, мастер-ключи пропускаем
+  const [gHidKeysOnly, setGHidKeysOnly] = useState(true); // цель: мастер-ключи (сиды) + hex + WIF
 
   useEffect(() => {
     getPresets()
@@ -736,11 +736,11 @@ export function SourcePanel({
               />
               <div>
                 <Label htmlFor="g-hid-keys-only" className="text-sm text-emerald-200">
-                  Искать только hex и WIF
+                  Искать ключи: мастер-ключи, hex и WIF
                 </Label>
                 <p className="text-xs text-emerald-400/70">
-                  Мастер-ключи (сид-фразы BIP39/Electrum, SeedQR) и адреса пропускаем — цель:
-                  сырые hex-ключи и WIF. Адрес при ключе сохраняется.
+                  Мастер-ключи (сид-фразы BIP39/Electrum, SeedQR), hex- и WIF-ключи — цель;
+                  пропускаются только mini-ключи и отдельные адреса (шум). Адрес при ключе сохраняется.
                 </p>
               </div>
             </div>

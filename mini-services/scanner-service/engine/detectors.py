@@ -227,9 +227,10 @@ class Wordlist12:
 def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
     """Возвращает список находок всех поддерживаемых типов в одном тексте QR-кода.
 
-    Строгий режим keys_hex_wif_only: цель — только hex- и WIF-ключи; мастер-ключи
-    (сид-фразы BIP39/Electrum, SeedQR), mini-ключи и отдельные адреса пропускаются.
-    Адрес при этом остаётся при ключе — validate_wif/validate_hex_key сами его вшивают.
+    Режим keys_only («только ключи»): цель — мастер-ключи (сид-фразы BIP39,
+    Electrum, SeedQR) плюс hex- и WIF-ключи; mini-ключи и отдельные адреса
+    пропускаются как шум. Адрес остаётся при ключе — validate_wif/
+    validate_hex_key сами его вшивают в находку.
     """
     results: list[dict] = []
     seen: set[tuple[str, str]] = set()
@@ -241,7 +242,7 @@ def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
             results.append(f)
 
     tokens = _tokens(text)
-    only_keys = bool(options.get("keys_hex_wif_only"))
+    only_keys = bool(options.get("keys_only"))
 
     if options.get("detect_wif", True) or only_keys:
         for m in B58_TOKEN_RE.finditer(text):
@@ -261,15 +262,15 @@ def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
             if f:
                 push(f.to_dict())
 
-    if options.get("detect_seed", True) and not only_keys:
+    if options.get("detect_seed", True) or only_keys:
         for f in bip39.scan_text(text):
             push(f)
 
-        if options.get("detect_seedqr", True):
+        if options.get("detect_seedqr", True) or only_keys:
             for sq in detect_compact_seedqr(text, bip39):
                 push(sq)
 
-        if options.get("detect_electrum", True):
+        if options.get("detect_electrum", True) or only_keys:
             # старый формат Electrum (2011-2016, словарь 1626 слов)
             for window in get_electrum_legacy().scan_text(text):
                 phrase = " ".join(window)
@@ -296,9 +297,9 @@ def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
 
 def analyze_bytes(raw: bytes, options: dict, bip39: Bip39) -> list[dict]:
     """Анализ исходных байтов QR (byte-mode): Standard SeedQR.
-    В строгом режиме (только hex/WIF) сид-форматы пропускаются."""
-    if not options.get("detect_seed", True) or not options.get("detect_seedqr", True) \
-            or options.get("keys_hex_wif_only"):
+    В режиме «только ключи» SeedQR — тоже мастер-ключ, он ищется как обычно."""
+    if not (options.get("detect_seed", True) or options.get("keys_only")) \
+            or not (options.get("detect_seedqr", True) or options.get("keys_only")):
         return []
     if not raw:
         return []

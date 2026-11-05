@@ -103,7 +103,7 @@ export interface ScanOptions {
   detect_seedqr: boolean;
   detect_electrum: boolean;
   detect_addresses: boolean;
-  keys_hex_wif_only: boolean;
+  keys_only: boolean;
   ocr_fallback: boolean;
   scan_strings: boolean;
 }
@@ -117,7 +117,7 @@ export const DEFAULT_OPTIONS: ScanOptions = {
   detect_seedqr: true,
   detect_electrum: true,
   detect_addresses: true,
-  keys_hex_wif_only: false,
+  keys_only: false,
   ocr_fallback: true,
   scan_strings: true,
 };
@@ -280,7 +280,7 @@ export async function scanGlobal(params: {
   max_urls?: number;
   max_pages?: number;
   max_files?: number;
-  keys_only?: boolean;   // режим «Скрытые папки»: мастер-ключи пропускаем, ищем hex и WIF
+  keys_only?: boolean;   // режим «Скрытые папки»: ищем ключи — мастер-ключи (сиды), hex и WIF
 }): Promise<{ job_id: string; mode: string; label: string }> {
   const res = await fetch(apiUrl("scan/global"), {
     method: "POST",

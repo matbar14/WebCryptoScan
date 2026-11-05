@@ -7,9 +7,9 @@ import type { ScanOptions } from "@/lib/scanner-api";
 
 const ITEMS: { key: keyof ScanOptions; label: string; hint: string; icon: React.ReactNode }[] = [
   {
-    key: "keys_hex_wif_only",
-    label: "Только hex и WIF",
-    hint: "строгий режим: мастер-ключи (сиды), mini и адреса пропускаем — цель hex- и WIF-ключи",
+    key: "keys_only",
+    label: "Только ключи: мастер, hex, WIF",
+    hint: "цель — мастер-ключи (сиды/SeedQR/Electrum), hex- и WIF-ключи; mini и отдельные адреса пропускаются",
     icon: <Crosshair className="h-3.5 w-3.5" aria-hidden />,
   },
   {
@@ -74,11 +74,14 @@ const ITEMS: { key: keyof ScanOptions; label: string; hint: string; icon: React.
   },
 ];
 
-// в строгом режиме эти детекторы перекрываются: WIF+hex включаются принудительно,
-// остальные выключаются
+// в режиме «только ключи» эти детекторы перекрываются: WIF+hex+мастер-ключи
+// включаются принудительно, mini и отдельные адреса выключаются
 const OVERRIDDEN = new Set<keyof ScanOptions>([
   "detect_wif", "detect_mini", "detect_hex", "detect_seed", "detect_seedqr",
   "detect_electrum", "detect_addresses",
+]);
+const FORCE_ON = new Set<keyof ScanOptions>([
+  "detect_wif", "detect_hex", "detect_seed", "detect_seedqr", "detect_electrum",
 ]);
 
 export function ScanOptionsCard({
@@ -90,7 +93,7 @@ export function ScanOptionsCard({
   onChange: (o: ScanOptions) => void;
   disabled?: boolean;
 }) {
-  const strict = options.keys_hex_wif_only;
+  const strict = options.keys_only;
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-1.5 text-sm font-medium text-zinc-300">
@@ -99,9 +102,9 @@ export function ScanOptionsCard({
       </div>
       <div className="divide-y divide-zinc-800/70">
         {ITEMS.map((it) => {
-          // в строгом режиме WIF и hex включаются принудительно, остальные детекторы
-          // перекрываются (выключаются) — переключатели показывают фактическое поведение
-          const forced = strict && (it.key === "detect_wif" || it.key === "detect_hex");
+          // в режиме «только ключи» WIF, hex и мастер-ключи включаются принудительно,
+          // mini и отдельные адреса выключаются — переключатели показывают фактическое поведение
+          const forced = strict && FORCE_ON.has(it.key);
           const overridden = strict && OVERRIDDEN.has(it.key);
           const checked = overridden ? forced : options[it.key];
           return (
@@ -110,7 +113,7 @@ export function ScanOptionsCard({
               className={`flex items-center justify-between gap-3 py-2.5 ${overridden ? "opacity-50" : ""}`}
             >
               <div className="min-w-0">
-                <Label className={it.key === "keys_hex_wif_only" ? "text-sm text-emerald-300" : "text-sm text-zinc-200"}>
+                <Label className={it.key === "keys_only" ? "text-sm text-emerald-300" : "text-sm text-zinc-200"}>
                   {it.label}
                 </Label>
                 <p className="text-xs text-zinc-500">{it.hint}</p>

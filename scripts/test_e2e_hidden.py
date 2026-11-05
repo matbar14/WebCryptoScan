@@ -5,7 +5,8 @@
 с .env (внутри валидный WIF), .git/HEAD, keys.txt (hex-ключ), seeds.txt
 (BIP39-фраза), листингом /backup/ и мягкой 404-заглушкой.
 Джоба 1 (обычные опции): WIF + hex + сид находятся.
-Джоба 2 (keys_hex_wif_only): мастер-ключи (сид) пропущены, hex и WIF — на месте.
+Джоба 2 (keys_only «только ключи»): мастер-ключи (сид) ИЩУТСЯ вместе с hex и WIF;
+отдельные адреса (шум) отброшены.
 """
 import json
 import os
@@ -129,8 +130,8 @@ try:
     # --- джоба 1: обычные опции — WIF + hex + сид находятся -----------------------
     jid1, st1 = run_job({})
 
-    # --- джоба 2: строгий режим — мастер-ключи пропускаем, ищем hex и WIF ---------
-    jid2, st2 = run_job({"keys_hex_wif_only": True})
+    # --- джоба 2: режим «только ключи» — мастер-ключи + hex + WIF, шум пропускаем -
+    jid2, st2 = run_job({"keys_only": True})
 finally:
     srv.shutdown()
     if engine and engine.poll() is None:
@@ -164,9 +165,9 @@ ok1 = st1.get("status") == "done" and WIF in vals1 and HEX in vals1 \
 out("джоба 1:", "PASS — WIF+hex+сид в находках" if ok1 else "FAIL")
 
 ok2 = st2.get("status") == "done" and WIF in vals2 and HEX in vals2 \
-    and not any(t.startswith(("bip39", "seedqr", "electrum")) for t in types2) \
+    and any(t.startswith(("bip39", "seedqr", "electrum")) for t in types2) \
     and not any(t.startswith("address_") for t in types2)
-out("джоба 2:", "PASS — hex+WIF на месте, мастер-ключи пропущены" if ok2 else "FAIL")
+out("джоба 2:", "PASS — мастер-ключ+hex+WIF на месте, адреса-шум отброшены" if ok2 else "FAIL")
 
 out("РЕЗУЛЬТАТ:", "PASS" if ok1 and ok2 else "FAIL")
 sys.exit(0 if ok1 and ok2 else 1)

@@ -164,7 +164,7 @@ export default function Home() {
       const { keys_only, ...rest } = p;
       const opts = keys_only === undefined
         ? options
-        : { ...options, keys_hex_wif_only: keys_only };
+        : { ...options, keys_only };
       return runJob(() => scanGlobal({ ...rest, options: opts }).then((r) => r.job_id));
     },
     [options, runJob],

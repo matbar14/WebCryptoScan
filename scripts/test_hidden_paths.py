@@ -105,8 +105,8 @@ def check(cond: bool, msg: str) -> None:
 
 FAILED = False
 
-# --- analyze_text: строгий режим keys_hex_wif_only -----------------------------------
-print("== analyze_text: строгий режим (мастер-ключи пропускаем, ищем hex и WIF) ==")
+# --- analyze_text: режим keys_only (мастер-ключи + hex + WIF, мини/адреса-шум прочь) -
+print("== analyze_text: режим «только ключи» (мастер-ключи ищем, не пропускаем) ==")
 bip = get_bip39()
 phrase = " ".join(entropy_to_mnemonic(bytes(range(16)), bip))
 mixed = f"backup dump\n{phrase}\nWIF: {WIF}\nHEX: {HEX}\nchange to: {ADDR}\n"
@@ -117,23 +117,23 @@ check(any(t.startswith("bip39") for t in all_types), f"обычный режим
 check("wif_compressed" in all_types and "hex_private_key" in all_types, "обычный режим: WIF и hex найдены")
 check(any(t.startswith("address_") for t in all_types), "обычный режим: отдельный адрес найден")
 
-strict_f = analyze_text(mixed, {"keys_hex_wif_only": True}, bip)
+strict_f = analyze_text(mixed, {"keys_only": True}, bip)
 strict_types = {f["type"] for f in strict_f}
-check(strict_types == {"wif_compressed", "hex_private_key"},
-      f"строгий режим: только WIF и hex ({sorted(strict_types)})")
-check(not any(t.startswith(("bip39", "seedqr", "electrum")) for t in strict_types),
-      "строгий режим: мастер-ключи (сиды) пропущены")
+check(strict_types == {"bip39_seed_phrase_12", "wif_compressed", "hex_private_key"},
+      f"режим ключей: мастер-ключ + WIF + hex ({sorted(strict_types)})")
+check(any(t.startswith("bip39") for t in strict_types),
+      "режим ключей: МАСТЕР-КЛЮЧ ИЩЕТСЯ, а не пропускается")
 check(not any(t.startswith("address_") for t in strict_types),
-      "строгий режим: отдельные адреса пропущены")
+      "режим ключей: отдельные адреса (шум) пропущены")
 wif_f = next(f for f in strict_f if f["type"] == "wif_compressed")
-check(wif_f.get("address") == ADDR, "строгий режим: адрес сохранён при WIF")
+check(wif_f.get("address") == ADDR, "режим ключей: адрес сохранён при WIF")
 hex_f = next(f for f in strict_f if f["type"] == "hex_private_key")
-check(hex_f.get("wif") == WIF, "строгий режим: WIF сохранён при hex")
-# строгий режим включается даже если обычные детекторы выключены
-strict_f2 = analyze_text(mixed, {"keys_hex_wif_only": True, "detect_wif": False,
-                                 "detect_hex": False}, bip)
-check({f["type"] for f in strict_f2} == {"wif_compressed", "hex_private_key"},
-      "строгий режим перекрывает выключенные детекторы WIF/hex")
+check(hex_f.get("wif") == WIF, "режим ключей: WIF сохранён при hex")
+# режим перекрывает даже выключенные детекторы (сид/ключи ищутся принудительно)
+strict_f2 = analyze_text(mixed, {"keys_only": True, "detect_seed": False,
+                                 "detect_wif": False, "detect_hex": False}, bip)
+check({f["type"] for f in strict_f2} == {"bip39_seed_phrase_12", "wif_compressed", "hex_private_key"},
+      "режим ключей перекрывает выключенные детекторы сид/hex/WIF")
 
 # --- список скрытых путей: расширенный перебор ---------------------------------------
 print("== _HIDDEN_PROBES: расширенный перебор ==")
