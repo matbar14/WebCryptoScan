@@ -471,12 +471,15 @@ def ocr_base58_repair(text: str) -> list[dict]:
         r"(?<![1-9A-HJ-NP-Za-km-z])[" + BASE58_ALPHABET + r"]{26,55}(?![1-9A-HJ-NP-Za-km-z])"
     )
     out: list[dict] = []
-    seen: set[str] = set()
+    seen: set[str] = set()    # токены-кандидаты, уже разобранные (вход)
+    pushed: set[str] = set()  # значения, попавшие в вывод
 
     def push(f: dict | None, note: str) -> None:
-        if not f or f["value"] in seen:
+        # NB: проверяем именно pushed — в seen к этому моменту уже лежит
+        # сам токен tok, и проверка по seen молча отбрасывала бы все находки.
+        if not f or f["value"] in pushed:
             return
-        seen.add(f["value"])
+        pushed.add(f["value"])
         if note:
             f["detail"] = f"{f.get('detail', '')} · {note}".strip(" ·")
         out.append(f)
