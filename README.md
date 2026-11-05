@@ -3,7 +3,7 @@
 Локальная веб-панель: каскадное распознавание QR-кодов, офлайн-валидация приватных
 ключей Bitcoin и BIP39 сид-фраз, мультивалютные адреса, краулер (фото + веб-поиск
 по тем же ключевым словам) и глобальный поиск по открытым источникам (веб-архивы,
-dork-запросы, Common Crawl, GitHub).
+dork-запросы, открытые каталоги «index of», Common Crawl, GitHub).
 
 > ⚠️ **Назначение.** Инструмент для исследований безопасности и демонстрации того, как
 > быстро публичные QR-коды с секретами находятся и вскрываются. Вся валидация выполняется
@@ -66,7 +66,7 @@ dork-запросы, Common Crawl, GitHub).
                                        ├─ engine/textscan.py    OCR, EXIF, строки, PDF (текст + растеризация)
                                        ├─ engine/crawler.py     9 поисковых систем + пресеты
                                        ├─ engine/sitespider.py  парсер сайтов (+ Wayback)
-                                       ├─ engine/globalsearch.py архивы CDX (дельта), dorks, Common Crawl, GitHub
+                                       ├─ engine/globalsearch.py архивы CDX (дельта), dorks, index of, Common Crawl, GitHub
                                        ├─ engine/reports.py     TXT / JSON / CSV
                                        └─ data/  словари BIP39 (2048) и Electrum legacy (1626)
 ```
@@ -154,7 +154,7 @@ Python-движок при этом стартует сам вместе с Next
 | POST | `/api/scan/folder` | `{path, options}` (PDF в папке растеризуются) |
 | POST | `/api/scan/crawl` | `{preset\|keyword, engines[], max_num, options}` |
 | POST | `/api/scan/site` | `{url, archive: auto\|yes\|no, max_num, options}` |
-| POST | `/api/scan/global` | `{mode: archive\|dorks\|commoncrawl\|github, ...}` |
+| POST | `/api/scan/global` | `{mode: archive\|dorks\|indexof\|commoncrawl\|github, ...}` |
 | GET | `/api/global/presets` | пресеты dork-запросов и GitHub-поиска |
 | GET/DELETE | `/api/global/state?domain=` | дельта-состояние домена / сброс |
 | GET | `/api/jobs` | список джоб |

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Archive, Database, FileSearch, FolderOpen, Globe, Github, Link2, Loader2, Radar, RotateCcw, Search, Sparkles } from "lucide-react";
+import { Archive, Database, FileSearch, FolderOpen, FolderSearch, Globe, Github, Link2, Loader2, Radar, RotateCcw, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,6 +32,7 @@ function fmtStateDate(iso?: string): string {
 const GLOBAL_MODES: { id: GlobalMode; label: string; icon: typeof Archive; hint: string }[] = [
   { id: "archive", label: "Архивы", icon: Archive, hint: "домен целиком из веб-архива" },
   { id: "dorks", label: "Dork-поиск", icon: FileSearch, hint: "открытые каталоги и файлы" },
+  { id: "indexof", label: "Index of", icon: FolderSearch, hint: "обход открытых каталогов" },
   { id: "commoncrawl", label: "Common Crawl", icon: Database, hint: "миллиарды URL по маске" },
   { id: "github", label: "GitHub", icon: Github, hint: "утечки в коде и гистах" },
 ];
@@ -84,6 +86,8 @@ export function SourcePanel({
     custom?: string;
     engines?: string[];
     token?: string;
+    urls?: string[];
+    keywords?: string[];
     max_urls?: number;
     max_pages?: number;
     max_files?: number;
@@ -118,6 +122,9 @@ export function SourcePanel({
   const [gMaxUrls, setGMaxUrls] = useState(60);
   const [gMaxPages, setGMaxPages] = useState(10);
   const [gMaxFiles, setGMaxFiles] = useState(20);
+  const [gIoUrls, setGIoUrls] = useState("");
+  const [gIoKeywords, setGIoKeywords] = useState("");
+  const [gIoListings, setGIoListings] = useState(15);
 
   useEffect(() => {
     getPresets()
@@ -151,20 +158,29 @@ export function SourcePanel({
 
   const gDorkOk = gDorkPresets.length > 0 || gCustom.trim().length > 0;
   const gGhOk = gGhPresets.length > 0 || gCustom.trim().length > 0;
+  const gIoOk =
+    gIoUrls.trim().length > 0 ||
+    (gIoKeywords.trim().length > 0 && gEngines.length > 0);
   const gCanStart =
     gMode === "archive"
       ? gDomain.trim().length > 0
       : gMode === "dorks"
         ? gDorkOk && gEngines.length > 0
-        : gMode === "commoncrawl"
-          ? gMask.trim().length > 0
-          : gGhOk && gToken.trim().length > 0;
+        : gMode === "indexof"
+          ? gIoOk
+          : gMode === "commoncrawl"
+            ? gMask.trim().length > 0
+            : gGhOk && gToken.trim().length > 0;
 
   const startGlobal = () => {
     if (gMode === "archive") {
       onGlobal({ mode: "archive", domain: gDomain.trim(), provider: gProvider, delta: gDelta, prioritize: gPrioritize, depth: Number(gDepth), max_urls: gMaxUrls });
     } else if (gMode === "dorks") {
       onGlobal({ mode: "dorks", presets: gDorkPresets, custom: gCustom.trim(), engines: gEngines, max_pages: gMaxPages, max_files: gMaxFiles });
+    } else if (gMode === "indexof") {
+      const urls = gIoUrls.split(/\n/).map((s) => s.trim()).filter(Boolean);
+      const keywords = gIoKeywords.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+      onGlobal({ mode: "indexof", urls, keywords, engines: gEngines, depth: Number(gDepth), max_urls: gIoListings, max_files: Math.max(gMaxFiles, 40) });
     } else if (gMode === "commoncrawl") {
       onGlobal({ mode: "commoncrawl", mask: gMask.trim(), depth: Number(gDepth), max_urls: gMaxUrls });
     } else {
@@ -393,7 +409,7 @@ export function SourcePanel({
 
       <TabsContent value="global" className="mt-4 space-y-4">
         {/* выбор режима */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
           {GLOBAL_MODES.map((m) => {
             const Icon = m.icon;
             const on = gMode === m.id;
@@ -582,6 +598,82 @@ export function SourcePanel({
                 <Slider value={[gMaxFiles]} min={3} max={60} step={1} onValueChange={(v) => setGMaxFiles(v[0])} disabled={busy} />
               </div>
             </div>
+          </div>
+        )}
+
+        {/* --- Режим: Открытые каталоги (index of) --- */}
+        {gMode === "indexof" && (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="g-io-urls" className="text-zinc-300">Ссылки на каталоги (по одной в строке)</Label>
+              <Textarea
+                id="g-io-urls"
+                rows={4}
+                placeholder={"http://example.com/backup/\nhttp://files.example.org/wallets/"}
+                value={gIoUrls}
+                onChange={(e) => setGIoUrls(e.target.value)}
+                disabled={busy}
+                className="bg-zinc-950/60 border-zinc-800 font-mono text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="g-io-kw" className="text-zinc-300">Или найти каталоги по ключевым словам (через запятую)</Label>
+              <Input
+                id="g-io-kw"
+                placeholder="wallet.dat, seed.txt, electrum, private keys"
+                value={gIoKeywords}
+                onChange={(e) => setGIoKeywords(e.target.value)}
+                disabled={busy}
+                className="bg-zinc-950/60 border-zinc-800 font-mono text-sm"
+              />
+              <p className="text-xs text-zinc-500">
+                По ключам запустится поиск листингов (intitle:"index of" …); найденные каталоги
+                будут обойдены так же, как и указанные вручную ссылки.
+              </p>
+            </div>
+            {gIoKeywords.trim().length > 0 && (
+              <div className="space-y-1.5">
+                <Label className="text-zinc-300">Поисковые движки</Label>
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  {Object.entries(gPresets?.dork_engines ?? {}).map(([id, label]) => (
+                    <label key={id} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                      <Checkbox checked={gEngines.includes(id)} onCheckedChange={() => toggleIn(setGEngines, id)} disabled={busy} />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label className="text-zinc-300">Обход подкаталогов</Label>
+              <Select value={gDepth} onValueChange={setGDepth} disabled={busy}>
+                <SelectTrigger className="bg-zinc-950/60 border-zinc-800">
+                  <SelectValue placeholder="Глубина обхода" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-900 border-zinc-800">
+                  <SelectItem value="0">Только файлы верхнего уровня</SelectItem>
+                  <SelectItem value="1">1 уровень подкаталогов</SelectItem>
+                  <SelectItem value="2">2 уровня</SelectItem>
+                  <SelectItem value="3">3 уровня</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Каталогов всего: {gIoListings}</Label>
+                <Slider value={[gIoListings]} min={1} max={60} step={1} onValueChange={(v) => setGIoListings(v[0])} disabled={busy} />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Файлов всего: {Math.max(gMaxFiles, 40)}</Label>
+                <Slider value={[gMaxFiles]} min={3} max={120} step={1} onValueChange={(v) => setGMaxFiles(v[0])} disabled={busy} />
+              </div>
+            </div>
+            <p className="rounded-md border border-sky-500/30 bg-sky-500/10 p-2 text-xs text-sky-300">
+              Обходчик разбирает листинги Apache/nginx/fancyindex: скачивает файлы (картинки —
+              в QR-сканер, txt/json/zip/pdf — в детекторы строк), раскрывает подкаталоги и
+              приоритизирует имена с wallet/seed/keys. Работает и в других режимах: наткнувшись
+              на «Index of», конвейер обходит его целиком.
+            </p>
           </div>
         )}
 

@@ -754,7 +754,7 @@ def scan_site(body: dict):
     return {"job_id": job["id"], "url": url, "archive": archive, "max_num": max_num}
 
 
-GLOBAL_MODES = ("archive", "dorks", "commoncrawl", "github")
+GLOBAL_MODES = ("archive", "dorks", "indexof", "commoncrawl", "github")
 
 
 @app.get("/api/global/presets")
@@ -789,7 +789,7 @@ def global_state_reset(domain: str = ""):
 def scan_global(body: dict):
     mode = str(body.get("mode", "") or "").strip()
     if mode not in GLOBAL_MODES:
-        raise HTTPException(status_code=400, detail="mode: archive | dorks | commoncrawl | github")
+        raise HTTPException(status_code=400, detail="mode: archive | dorks | indexof | commoncrawl | github")
     opts = _parse_options(json.dumps(body.get("options", {})))
 
     params: dict = {"mode": mode}
@@ -821,6 +821,30 @@ def scan_global(body: dict):
                       max_pages=int(body.get("max_pages", 10)),
                       max_files=int(body.get("max_files", 20)))
         label = f"Dork-поиск: {custom or ', '.join(DORK_PRESETS[p]['label'] for p in presets)}"
+    elif mode == "indexof":
+        # прямые ссылки на листинги: список или строки через пробел/перевод строки
+        raw_urls = body.get("urls") or []
+        if isinstance(raw_urls, str):
+            raw_urls = re.split(r"[\s,;]+", raw_urls)
+        urls = [str(u).strip() for u in raw_urls if str(u).strip()]
+        raw_kw = body.get("keywords") or []
+        if isinstance(raw_kw, str):
+            raw_kw = re.split(r"[,;]+", raw_kw)
+        keywords = [str(k).strip() for k in raw_kw if str(k).strip()][:8]
+        engines = [e for e in (body.get("engines") or ["bing"]) if e in DORK_ENGINE_LABELS]
+        if not urls and (not keywords or not engines):
+            raise HTTPException(
+                status_code=400,
+                detail="Укажите ссылки на каталоги (index of) или ключевые слова + движок для их поиска",
+            )
+        io_depth = max(0, min(int(body.get("depth", 2) or 0), 3))
+        params.update(urls=urls, keywords=keywords,
+                      engines=engines or ["bing"], depth=io_depth,
+                      max_urls=max(1, min(int(body.get("max_urls", 15)), 60)),
+                      max_files=max(3, min(int(body.get("max_files", 40)), 120)))
+        label = (f"Index of: {len(urls)} каталог(ов)"
+                 + (f" + поиск по {len(keywords)} ключам" if keywords else "")
+                 + (f" — глубина {io_depth}" if io_depth else ""))
     elif mode == "commoncrawl":
         mask = str(body.get("mask", "") or "").strip()
         if not mask:

@@ -210,6 +210,9 @@ DORK_PRESETS: dict[str, dict] = {
             {"dork": 'intitle:"index of" "private keys" bitcoin', "plain": '"private keys" bitcoin txt'},
             {"dork": 'intitle:"index of" keys.txt', "plain": '"keys.txt" bitcoin'},
             {"dork": 'intitle:"index of" "paper wallet"', "plain": '"paper wallet" bitcoin pdf download'},
+            {"dork": 'intitle:"index of" "wallet backup"', "plain": '"wallet backup" directory bitcoin'},
+            {"dork": 'intitle:"index of" /backups btc', "plain": '"index of" backups bitcoin keys'},
+            {"dork": 'intitle:"index of" electrum wallets', "plain": '"index of" electrum wallets directory'},
         ],
     },
     "seed_backups": {
@@ -882,6 +885,177 @@ def file_links_from_html(html: str, base_url: str, limit: int = 12) -> list[str]
     return out
 
 
+# --- Каталоги «Index of» -------------------------------------------------------------
+#
+# Открытые листинги (Apache autoindex, nginx, fancyindex, «Directory listing for»)
+# — самый урожайный источник: файлы лежат прямыми ссылками, подкаталоги
+# раскрываются обходом. Детектор+парсер+обходчик ниже обслуживают и отдельный
+# режим, и все остальные источники (наткнулись на листинг — обошли его целиком).
+
+_LISTING_MAX_BYTES = 2_000_000   # сколько HTML листинга читаем
+_LISTING_FILES_LIMIT = 150       # максимум файлов из одного листинга (после приоритизации)
+_LISTING_DIRS_LIMIT = 50         # максимум подкаталогов из одного листинга
+
+_INDEX_TITLE_RE = re.compile(
+    r"<title>[^<]{0,300}?(?:index\s+of|directory\s+listing)[^<]{0,300}?</title>", re.I)
+_INDEX_ANCHOR_RE = re.compile(r'''<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)</a>''', re.I | re.S)
+
+
+def _is_index_listing(html: str) -> bool:
+    """Похоже ли на открытый каталог: заголовок «Index of / …» и куча <a>-записей."""
+    if not html:
+        return False
+    if _INDEX_TITLE_RE.search(html):
+        return True
+    # листинги без <title>: заголовок-надпись + ссылки на записи каталога
+    if re.search(r">Directory listing for /", html, re.I):
+        return True
+    return "Parent Directory" in html and len(_INDEX_ANCHOR_RE.findall(html)) >= 3
+
+
+def _clean_listing_href(href: str) -> str:
+    href = unquote((href or "").strip())
+    return href.split("#", 1)[0].split("?", 1)[0]
+
+
+def _is_parent_link(path: str) -> bool:
+    """Ссылки на родительский каталог: .., ../, /a/b/../../ и т.п."""
+    p = path.rstrip("/")
+    return p == ".." or p == "." or p.endswith("/..")
+
+
+def _parse_index_entries(html: str, base_url: str, allow_private: bool = False) -> tuple[list[str], list[str]]:
+    """Записи листинга: (подкаталоги, файлы) — абсолютные URL того же хоста.
+
+    Каталоги отличаем по завершающему '/' пути (так пишут Apache, nginx,
+    fancyindex); ссылки вверх (.., на родителя и выше), сам каталог и чужие
+    хосты отбрасываем. Пути с не-ASCII/пробелами перекодируются — иначе
+    requests отказывается их качать.
+
+    allow_private: листинг явно указан пользователем (доверенный хост) —
+    записи того же хоста не прогоняются через SSRF-фильтр (иначе невозможно
+    обходить каталоги в локальной сети).
+    """
+    try:
+        base_host = urlparse(base_url).netloc.lower().removeprefix("www.")
+    except ValueError:
+        return [], []
+    try:
+        base_path = urlparse(base_url).path
+        base_dir = base_path if base_path.endswith("/") else base_path.rsplit("/", 1)[0] + "/"
+    except ValueError:
+        base_dir = "/"
+    dirs: list[str] = []
+    files: list[str] = []
+    seen: set[str] = set()
+    for href, _text in _INDEX_ANCHOR_RE.findall(html):
+        href = _clean_listing_href(href)
+        if not href or href.startswith(("javascript:", "mailto:", "data:", "tel:")):
+            continue
+        try:
+            full = urljoin(base_url, href)
+        except ValueError:
+            continue
+        if not full.startswith(("http://", "https://")):
+            continue
+        try:
+            pu = urlparse(full)
+        except ValueError:
+            continue
+        host = pu.netloc.lower().removeprefix("www.")
+        if host != base_host or _is_parent_link(pu.path):
+            continue
+        # не-ASCII/пробелы в пути — перекодируем (urljoin их не трогает)
+        if re.search(r"[^\x21-\x7e]", pu.path):
+            full = f"{pu.scheme}://{pu.netloc}{quote(pu.path, safe='/') }"
+        full_nq = full.rstrip("/")
+        # доверенный (пользовательский) хост — не фильтруем; чужие записи уже
+        # отсечены проверкой host != base_host выше
+        if not (allow_private or _is_fetchable_url(full)) or full_nq in seen:
+            continue
+        seen.add(full_nq)
+        if pu.path.endswith("/"):
+            # вверх по дереву (родитель и выше) или сам каталог — не интересует
+            if pu.path != base_dir and not base_dir.startswith(pu.path):
+                dirs.append(full)
+        else:
+            files.append(full)
+    return dirs[:_LISTING_DIRS_LIMIT], files[:_LISTING_FILES_LIMIT]
+
+
+def walk_index_of(root: str, store: "_Store", *, depth: int = 2, max_items: int = 200,
+                  prog: Callable[[str, int, int], None] | None = None,
+                  label: str = "Каталог index of",
+                  allow_private: bool = False) -> dict:
+    """Обход открытого каталога: файлы листинга докачиваются (картинки и документы
+    раскладывает общий конвейер), подкаталоги раскрываются до depth.
+
+    root — URL листинга; если это не листинг, содержимое просто раскладывается
+    по типам. max_items — бюджет загрузок на вызов. allow_private — листинг
+    указан пользователем вручную (доверенный хост, можно локальный/LAN).
+    Возвращает статистику.
+    """
+    stats = {"listings": 0, "dirs": 0, "files": 0, "fetched": 0, "errors": 0,
+             "listing_urls": []}
+    seen: set[str] = set()
+    queue: list[tuple[str, int]] = [(root, 0)]
+
+    def report() -> None:
+        if prog:
+            prog(f"{label}: каталогов {stats['listings']}, файлов {stats['files']}",
+                 stats["fetched"], max_items)
+
+    while queue and stats["fetched"] < max_items:
+        url, lvl = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        try:
+            r = requests.get(url, headers=_HEADERS, timeout=(12, 30), stream=True)
+        except Exception:  # noqa: BLE001
+            stats["errors"] += 1
+            continue
+        if r.status_code in (403, 429):
+            store.counters["blocked"] += 1
+            stats["errors"] += 1
+            continue
+        if r.status_code != 200:
+            stats["errors"] += 1
+            continue
+        data = r.content
+        if not data or len(data) > MAX_ITEM_BYTES:
+            stats["errors"] += 1
+            continue
+        html = data.decode("utf-8", errors="replace")[:_LISTING_MAX_BYTES]
+        if not _is_index_listing(html):
+            if _route_bytes(data, r.headers.get("content-type", ""), url, store) != "skip":
+                stats["files"] += 1
+                stats["fetched"] += 1
+            report()
+            continue
+        stats["listings"] += 1
+        if len(stats["listing_urls"]) < 50:
+            stats["listing_urls"].append(url)
+        dirs, files = _parse_index_entries(html, url, allow_private=allow_private)
+        # файлы с ключевыми словами в имени (wallet, seed, keys…) — первыми
+        files.sort(key=_url_priority_score, reverse=True)
+        for f in files:
+            if stats["fetched"] >= max_items:
+                break
+            if f in store.saved_urls:
+                continue
+            if _fetch_item(f, store):
+                stats["files"] += 1
+            stats["fetched"] += 1
+        if lvl < depth:
+            for d in dirs:
+                if d not in seen:
+                    queue.append((d, lvl + 1))
+                    stats["dirs"] += 1
+        report()
+    return stats
+
+
 # --- Режим commoncrawl ------------------------------------------------------------------
 
 def commoncrawl_list(mask: str, limit: int) -> dict:
@@ -966,13 +1140,14 @@ def _load_doc_hashes(files_dir: Path) -> set[str]:
 
 
 def _fetch_serp_pages(urls: list[str], store: _Store, max_pages: int, max_files: int,
-                      prog: Callable[[str, int, int], None], label: str) -> int:
+                      prog: Callable[[str, int, int], None], label: str,
+                      walk_depth: int = 1) -> int:
     """Загружает выдачу текстового поиска: страницы + файлы из листингов каталогов.
 
     Страницы попадают в pages/ (видимый текст), попутные картинки — в images/,
-    документы (txt/json/pdf/zip) — в files/. Из страниц-листингов (index of)
-    дополнительно вычитываются прямые ссылки на файлы. Возвращает суммарное
-    число сохранённых находок (картинки + документы + страницы).
+    документы (txt/json/pdf/zip) — в files/. Если страница — открытый каталог
+    (index of), он обходится целиком: файлы докачиваются, подкаталоги
+    раскрываются до walk_depth. Возвращает суммарное число сохранённых находок.
     """
     saved_total = 0
     pages_done = 0
@@ -993,14 +1168,20 @@ def _fetch_serp_pages(urls: list[str], store: _Store, max_pages: int, max_files:
             ct = r.headers.get("content-type", "")
             kind = _route_bytes(data, ct, u, store)
             if kind == "page" and store.counters["docs"] < max_files:
-                # из листингов каталогов тянем файлы
-                links = file_links_from_html(data.decode("utf-8", errors="replace")[:2_000_000], u)
-                for link in links:
-                    if store.counters["docs"] >= max_files:
-                        break
-                    if link in store.saved_urls:
-                        continue
-                    _fetch_item(link, store)
+                html = data.decode("utf-8", errors="replace")[:_LISTING_MAX_BYTES]
+                if _is_index_listing(html):
+                    # открытый каталог: обходим его целиком, а не только известные расширения
+                    walk_index_of(u, store, depth=walk_depth,
+                                  max_items=max(30, max_files * 3), prog=prog,
+                                  label=f"{label}: каталог")
+                else:
+                    links = file_links_from_html(html, u)
+                    for link in links:
+                        if store.counters["docs"] >= max_files:
+                            break
+                        if link in store.saved_urls:
+                            continue
+                        _fetch_item(link, store)
             pages_done += 1
         except Exception:  # noqa: BLE001 — одна битая ссылка не роняет джобу
             continue
@@ -1023,7 +1204,7 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
     job_dir.mkdir(parents=True, exist_ok=True)
     mode = str(params.get("mode", "archive"))
     prefix = {"archive": "arx", "dorks": "drk", "commoncrawl": "cc", "github": "gh",
-              "keywords": "web"}.get(mode, "gl")
+              "keywords": "web", "indexof": "idx"}.get(mode, "gl")
 
     def prog(stage: str, done: int, total: int) -> None:
         if progress:
@@ -1164,8 +1345,67 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
             urls = list(dict.fromkeys(urls))
             stats["urls_found"] = len(urls)
             stats["count"] = _fetch_serp_pages(
-                urls, store, max_pages, max_files, prog, "Загрузка находок")
+                urls, store, max_pages, max_files, prog, "Загрузка находок",
+                walk_depth=max(0, min(int(params.get("depth", 1) or 0), 3)))
             result["sources"][eng] = stats
+
+    elif mode == "indexof":
+        # Режим «Открытые каталоги (index of)»: прямые ссылки на листинги +
+        # поиск листингов через SERP (intitle:"index of" …), затем обход каждого
+        # каталога: файлы докачиваются, подкаталоги раскрываются до depth.
+        raw_urls = params.get("urls") or []
+        if isinstance(raw_urls, str):
+            raw_urls = re.split(r"[\s,;]+", raw_urls)
+        # прямые ссылки указывает сам пользователь — доверенные (можно LAN/localhost);
+        # всё, что найдено через SERP, идёт через обычный SSRF-фильтр
+        roots = [u.strip() for u in raw_urls
+                 if str(u).strip().startswith(("http://", "https://"))]
+        keywords = [str(k).strip() for k in (params.get("keywords") or [])
+                    if str(k).strip()][:8]
+        engines = [e for e in (params.get("engines") or ["bing"]) if e in SERPS] or ["bing"]
+        depth = max(0, min(int(params.get("depth", 2) or 0), 3))
+        max_listings = max(1, min(int(params.get("max_urls", 15)), 60))
+        max_files = max(3, min(int(params.get("max_files", 40)), 120))
+        budget = max_files * 4      # суммарный лимит загрузок режима
+
+        src: dict = {"roots": len(roots), "keywords": len(keywords),
+                     "listings_found": 0, "walked": {}, "error": None}
+        candidates: list[str] = list(dict.fromkeys(roots))
+
+        # SERP-фаза: по каждому ключевому слову ищем листинги; прямой dork дают
+        # локальные движки, Bing/Marginalia из дата-центров получают plain-вариант
+        if keywords:
+            for eng in engines:
+                queries = keywords[:2] if eng == "marginalia" else keywords
+                for i, kw in enumerate(queries):
+                    q = f'"index of" {kw}' if eng in PLAIN_ONLY_ENGINES else f'intitle:"index of" {kw}'
+                    try:
+                        res = SERPS[eng](q, 15)
+                    except Exception as e:  # noqa: BLE001
+                        res = {"urls": [], "error": f"{type(e).__name__}"}
+                    src["error"] = res.get("error") or src["error"]
+                    candidates += res["urls"]
+                    prog(f"Поиск каталогов: {eng} — {i + 1}/{len(queries)}",
+                         i + 1, max(1, len(queries)))
+        # приоритизация кандидатов и лимит: сначала то, где в URL есть ключевые слова
+        candidates = sorted(dict.fromkeys(candidates), key=_url_priority_score, reverse=True)
+        candidates = [c for c in candidates if c not in roots][: max(0, max_listings - len(roots))]
+        candidates = roots + candidates
+        src["listings_found"] = len(candidates)
+
+        fetched_total = 0
+        for i, u in enumerate(candidates):
+            if fetched_total >= budget:
+                break
+            w = walk_index_of(u, store, depth=depth,
+                              max_items=min(120, budget - fetched_total),
+                              prog=prog, label=f"Каталог {i + 1}/{len(candidates)}",
+                              allow_private=u in roots)
+            fetched_total += int(w["fetched"])
+            src["walked"][u] = {k: w[k] for k in ("listings", "dirs", "files", "errors", "fetched")}
+            prog(f"Каталоги index of: {i + 1}/{len(candidates)} пройдено", i + 1, len(candidates))
+        src["fetched"] = fetched_total
+        result["sources"]["indexof"] = src
 
     elif mode == "keywords":
         # Обычный веб-поиск по ключевым словам — веб-фаза классического краулера.
@@ -1198,7 +1438,8 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
             if not urls and not stats["error"]:
                 stats["error"] = f"{SERP_LABELS.get(eng, eng)}: выдача пуста"
             stats["count"] = _fetch_serp_pages(
-                urls, store, max_pages, max_files, prog, f"Веб-поиск: {eng} — загрузка")
+                urls, store, max_pages, max_files, prog, f"Веб-поиск: {eng} — загрузка",
+                walk_depth=max(0, min(int(params.get("depth", 1) or 0), 3)))
             result["sources"][eng] = stats
 
     elif mode == "commoncrawl":
