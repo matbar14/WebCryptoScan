@@ -12,6 +12,8 @@ const SOURCE_RU: Record<string, string> = {
   duckduckgo: "DuckDuckGo",
   commoncrawl: "Common Crawl",
   github: "GitHub",
+  indexof: "Открытые каталоги (index of)",
+  hidden: "Скрытые папки",
 };
 
 function phaseLabel(job: Job): string {

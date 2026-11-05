@@ -70,6 +70,8 @@ PRIORITIZE_KEYWORDS = (
     "keystore", "metamask", "electrum", "paperwallet", "paper-wallet", "keys",
     "wallet.dat", "privkey", "wif", "bip39", "bip38", "bitcoin", "btc",
     "ethereum", "monero", "xrp", "crypto", "secret", "coin",
+    # скрытые папки и файлы
+    ".git/", ".svn/", ".env", "htaccess", "htpasswd", "ds_store", "dump",
 )
 
 _KIND_RANK = {"image": 0, "doc": 1, "page": 2}
@@ -1056,6 +1058,237 @@ def walk_index_of(root: str, store: "_Store", *, depth: int = 2, max_items: int 
     return stats
 
 
+# --- Скрытые папки и файлы ------------------------------------------------------------
+#
+# Скрытое на веб-сервере не видно ни в листингах, ни в поисковиках — его можно
+# только перебрать по типовым именам. Чаще всего забывают закрыть: репозитории
+# СКВ (.git/.svn/.hg), окружения (.env), серверные конфиги (.htaccess/.htpasswd),
+# системный .DS_Store и «временно» открытые каталоги бэкапов/дампов/ключей.
+# Найденные листинги отдаются обходчику каталогов, файлы — общему конвейеру
+# (детекторы строк + QR), «мягкие 404» (html-заглушки с кодом 200) отсекаются.
+
+# (путь, вид): file — ожидаем документ, dir — каталог (ожидаем листинг)
+_HIDDEN_PROBES: tuple[tuple[str, str], ...] = (
+    (".git/HEAD", "file"),      # маркер экспонированного git-репозитория
+    (".svn/entries", "file"),
+    (".svn/wc.db", "file"),
+    (".env", "file"),
+    (".env.local", "file"),
+    (".env.backup", "file"),
+    (".htaccess", "file"),
+    (".htpasswd", "file"),
+    (".DS_Store", "file"),
+    (".git/", "dir"),
+    (".svn/", "dir"),
+    (".hg/", "dir"),
+    ("backup/", "dir"),
+    ("backups/", "dir"),
+    ("old/", "dir"),
+    ("dump/", "dir"),
+    ("dumps/", "dir"),
+    ("db/", "dir"),
+    ("database/", "dir"),
+    ("private/", "dir"),
+    ("_private/", "dir"),
+    ("secret/", "dir"),
+    ("wallet/", "dir"),
+    ("wallets/", "dir"),
+    ("keys/", "dir"),
+    ("archive/", "dir"),
+    ("tmp/", "dir"),
+    ("data/", "dir"),
+)
+
+# добирается только если .git/HEAD подтвердил репозиторий
+_GIT_EXTRA_PROBES: tuple[str, ...] = (
+    ".git/config", ".git/logs/HEAD", ".git/packed-refs",
+    ".git/description", ".git/COMMIT_EDITMSG",
+)
+
+_HIDDEN_MAX_SITES = 30            # сайтов за джобу
+_HIDDEN_PROBE_TIMEOUT = (8, 20)   # пробы короткие: 404 ждём быстро
+_HIDDEN_DS_NAMES_LIMIT = 30       # имён из одного .DS_Store
+_HIDDEN_DS_NAME_RE = re.compile(rb"(?:\x00[\x20-\xff]){3,40}")  # UTF-16BE: старший \x00 перед символом
+_HIDDEN_DS_ASCII_RE = re.compile(rb"[A-Za-z0-9][A-Za-z0-9 ._~%-]{2,63}")
+
+
+def normalize_site_root(url: str) -> str:
+    """Приводит адрес сайта к корню для перебора: example.com -> https://example.com/.
+
+    Схему и путь пользователь указал сам — доверенные (можно LAN/localhost);
+    проверяется только форма адреса. Непохожие на хост строки отбрасываются
+    (нет точки и это не localhost/IP — не домен).
+    """
+    u = (url or "").strip()
+    if not u or u.startswith(("#", "//")):
+        return ""
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", u, re.I):
+        u = "https://" + u
+    if not u.lower().startswith(("http://", "https://")):
+        return ""
+    try:
+        pu = urlparse(u)
+    except ValueError:
+        return ""
+    if not pu.netloc:
+        return ""
+    try:
+        host = (pu.hostname or "").lower()
+    except ValueError:
+        return ""
+    if not host:
+        return ""
+    is_ip = bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", host))
+    if not is_ip and host != "localhost" and "." not in host:
+        return ""
+    path = pu.path or "/"
+    if not path.endswith("/"):
+        path += "/"
+    return f"{pu.scheme}://{pu.netloc}{path}"
+
+
+def _ds_store_names(data: bytes, limit: int = _HIDDEN_DS_NAMES_LIMIT) -> list[str]:
+    """Имена файлов из .DS_Store (Finder хранит в нём содержимое каталога).
+
+    Имена лежат в записях как ASCII/MacRoman-строки и как UTF-16BE; берём
+    только похожие на файлы (с расширением) — иначе насорят служебные коды
+    записей («Bud1», «Iloc»…). Точечные имена (AppleDouble «._*») пропускаем.
+    """
+    if not data or not data.startswith(b"\x00\x00\x00\x01Bud1"):
+        return []
+    raw: list[str] = []
+    for m in _HIDDEN_DS_NAME_RE.finditer(data):          # UTF-16BE
+        try:
+            raw.append(m.group(0).decode("utf-16-be", errors="ignore"))
+        except Exception:  # noqa: BLE001
+            pass
+    for m in _HIDDEN_DS_ASCII_RE.finditer(data):         # ASCII/MacRoman
+        raw.append(m.group(0).decode("latin-1", errors="ignore"))
+    out: list[str] = []
+    seen: set[str] = set()
+    plausible = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._~-]*\.[A-Za-z0-9]{1,6}")
+    for name in raw:
+        name = name.strip()
+        if not name or name.startswith(".") or "/" in name or "\\" in name:
+            continue
+        # только похоже на имя файла: «хвост.расширение» без мусора между ними
+        if not plausible.fullmatch(name) or len(name) > 64:
+            continue
+        low = name.lower()
+        if low not in seen:
+            seen.add(low)
+            out.append(name)
+    out.sort(key=lambda n: (_url_ext(n) in FILE_LINK_EXTS, _url_priority_score(n)), reverse=True)
+    return out[:limit]
+
+
+def probe_hidden_paths(root: str, store: "_Store", *, depth: int = 2, max_items: int = 120,
+                       prog: Callable[[str, int, int], None] | None = None,
+                       label: str = "Скрытые папки",
+                       allow_private: bool = True) -> dict:
+    """Перебор типовых скрытых путей на сайте; root — корень сайта или каталога.
+
+    Что нашлось:
+      каталог-листинг -> walk_index_of (файлы и подкаталоги целиком);
+      файл            -> _route_bytes (детекторы строк, QR-конвейер, zip);
+      .git/HEAD       -> добираются тексты репозитория (config, logs, refs);
+      .DS_Store       -> имена файлов из него тоже пробуются;
+      401/403         -> путь существует, но закрыт (пометка в статистике).
+    «Мягкие 404» (заглушка с кодом 200) отсекаются: html без признаков листинга
+    считается промахом. Возвращает статистику: probed/hits/listings/files/…
+    """
+    base = normalize_site_root(root)
+    stats: dict = {"root": base, "probed": 0, "hits": {}, "listings": 0, "files": 0,
+                   "fetched": 0, "errors": 0}
+    if not base:
+        stats["error"] = "некорректный адрес сайта"
+        return stats
+
+    seen: set[str] = set()
+    forbidden_streak = 0
+    planned = len(_HIDDEN_PROBES)
+
+    def report() -> None:
+        if prog:
+            prog(f"{label}: проб {stats['probed']}, находок {len(stats['hits'])}",
+                 stats["probed"], max(planned, stats["probed"]))
+
+    def verdict(url: str, data: bytes, ct: str) -> str:
+        """'listing' | 'file' | 'miss' — по типу ответа; мягкие 404 отсекаются."""
+        ct_low = (ct or "").split(";")[0].strip().lower()
+        is_html = ct_low in HTML_MIMES or (not ct_low and data[:1] == b"<")
+        if not is_html:
+            # у .git/HEAD точный маркер — иначе это не репозиторий
+            if url.endswith(".git/HEAD"):
+                return "file" if data.lstrip().startswith(b"ref:") else "miss"
+            return "file"
+        html = data.decode("utf-8", errors="replace")[:_LISTING_MAX_BYTES]
+        if _is_index_listing(html):
+            return "listing"
+        return "miss"   # html-заглушка (мягкая 404) или обычная страница
+
+    tasks: list[tuple[str, str]] = [(base + p, k) for p, k in _HIDDEN_PROBES]
+    while tasks and stats["fetched"] < max_items:
+        url, kind = tasks.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        stats["probed"] += 1
+        report()
+        try:
+            r = requests.get(url, headers=_HEADERS, timeout=_HIDDEN_PROBE_TIMEOUT)
+        except Exception:  # noqa: BLE001
+            stats["errors"] += 1
+            continue
+        if r.status_code in (401, 403):
+            forbidden_streak += 1
+            stats["hits"][url] = f"закрыт ({r.status_code})"
+            if forbidden_streak >= 6:   # WAF рубит всё — дальше не стучимся
+                break
+            continue
+        if r.status_code == 429:
+            store.counters["blocked"] += 1
+            break
+        if r.status_code != 200:
+            forbidden_streak = 0
+            continue
+        forbidden_streak = 0
+        data = r.content
+        if not data or len(data) > MAX_ITEM_BYTES:
+            continue
+        v = verdict(url, data, r.headers.get("content-type", ""))
+        if v == "miss":
+            continue
+        stats["hits"][url] = "листинг" if v == "listing" else "файл"
+        if v == "listing":
+            stats["listings"] += 1
+            w = walk_index_of(url, store, depth=depth,
+                              max_items=max(1, max_items - stats["fetched"]),
+                              prog=prog, label=f"{label}: каталог {url}",
+                              allow_private=allow_private)
+            stats["files"] += int(w["files"])
+            stats["fetched"] += int(w["fetched"])
+            stats["listings"] += max(0, int(w["listings"]) - 1)  # root уже учтён
+            for lu in w.get("listing_urls") or []:   # вложенные листинги — тоже находки
+                stats["hits"].setdefault(lu, "листинг (обход)")
+        else:
+            if _route_bytes(data, r.headers.get("content-type", ""), url, store) != "skip":
+                stats["files"] += 1
+            if url.endswith(".git/HEAD"):
+                for extra in _GIT_EXTRA_PROBES:
+                    if base + extra not in seen:
+                        tasks.append((base + extra, "file"))
+                        planned += 1
+            elif url.endswith(".DS_Store"):
+                for name in _ds_store_names(data):
+                    if base + name not in seen:
+                        tasks.append((base + name, "file"))
+                        planned += 1
+        report()
+    report()
+    return stats
+
+
 # --- Режим commoncrawl ------------------------------------------------------------------
 
 def commoncrawl_list(mask: str, limit: int) -> dict:
@@ -1204,7 +1437,7 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
     job_dir.mkdir(parents=True, exist_ok=True)
     mode = str(params.get("mode", "archive"))
     prefix = {"archive": "arx", "dorks": "drk", "commoncrawl": "cc", "github": "gh",
-              "keywords": "web", "indexof": "idx"}.get(mode, "gl")
+              "keywords": "web", "indexof": "idx", "hidden": "hid"}.get(mode, "gl")
 
     def prog(stage: str, done: int, total: int) -> None:
         if progress:
@@ -1406,6 +1639,48 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
             prog(f"Каталоги index of: {i + 1}/{len(candidates)} пройдено", i + 1, len(candidates))
         src["fetched"] = fetched_total
         result["sources"]["indexof"] = src
+
+    elif mode == "hidden":
+        # Режим «Скрытые папки»: перебор типовых скрытых путей (.git, .env,
+        # backup/…) на указанных сайтах. Найденные листинги обходятся целиком,
+        # файлы идут в общий конвейер; найденное — в статистику источника.
+        raw_urls = params.get("urls") or []
+        if isinstance(raw_urls, str):
+            raw_urls = re.split(r"[\s,;]+", raw_urls)
+        roots = [normalize_site_root(str(u)) for u in raw_urls]
+        roots = list(dict.fromkeys(u for u in roots if u))[:_HIDDEN_MAX_SITES]
+        depth = max(0, min(int(params.get("depth", 2) or 0), 3))
+        max_files = max(3, min(int(params.get("max_files", 40)), 150))
+        budget = max_files * 3      # суммарный лимит загрузок режима
+
+        src: dict = {"roots": len(roots), "probed": 0, "hits": 0, "walked": {},
+                     "error": None if roots else "не указан ни один сайт"}
+        found: list[str] = []
+        fetched_total = 0
+        for i, u in enumerate(roots):
+            if fetched_total >= budget:
+                break
+            h = probe_hidden_paths(u, store, depth=depth,
+                                   max_items=min(120, budget - fetched_total),
+                                   prog=prog, label=f"Скрытые папки {i + 1}/{len(roots)}",
+                                   allow_private=True)
+            fetched_total += int(h.get("fetched", 0))
+            src["probed"] += int(h.get("probed", 0))
+            hits = h.get("hits") or {}
+            src["hits"] += len(hits)
+            src["walked"][u] = {"probed": h.get("probed", 0), "hits": hits,
+                                "listings": h.get("listings", 0),
+                                "files": h.get("files", 0),
+                                "fetched": h.get("fetched", 0),
+                                "errors": h.get("errors", 0)}
+            if h.get("error"):
+                src["error"] = f"{u}: {h['error']}"
+            found += [f"{url} — {what}" for url, what in hits.items()]
+            prog(f"Скрытые папки: {i + 1}/{len(roots)} сайтов", i + 1, max(1, len(roots)))
+        src["fetched"] = fetched_total
+        src["found"] = found[:100]
+        src["count"] = src["hits"]
+        result["sources"]["hidden"] = src
 
     elif mode == "keywords":
         # Обычный веб-поиск по ключевым словам — веб-фаза классического краулера.

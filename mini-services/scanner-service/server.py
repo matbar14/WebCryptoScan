@@ -754,7 +754,7 @@ def scan_site(body: dict):
     return {"job_id": job["id"], "url": url, "archive": archive, "max_num": max_num}
 
 
-GLOBAL_MODES = ("archive", "dorks", "indexof", "commoncrawl", "github")
+GLOBAL_MODES = ("archive", "dorks", "indexof", "hidden", "commoncrawl", "github")
 
 
 @app.get("/api/global/presets")
@@ -789,7 +789,7 @@ def global_state_reset(domain: str = ""):
 def scan_global(body: dict):
     mode = str(body.get("mode", "") or "").strip()
     if mode not in GLOBAL_MODES:
-        raise HTTPException(status_code=400, detail="mode: archive | dorks | indexof | commoncrawl | github")
+        raise HTTPException(status_code=400, detail="mode: archive | dorks | indexof | hidden | commoncrawl | github")
     opts = _parse_options(json.dumps(body.get("options", {})))
 
     params: dict = {"mode": mode}
@@ -845,6 +845,22 @@ def scan_global(body: dict):
         label = (f"Index of: {len(urls)} каталог(ов)"
                  + (f" + поиск по {len(keywords)} ключам" if keywords else "")
                  + (f" — глубина {io_depth}" if io_depth else ""))
+    elif mode == "hidden":
+        # сайты (домены или ссылки) для перебора скрытых путей: список или строки
+        raw_urls = body.get("urls") or []
+        if isinstance(raw_urls, str):
+            raw_urls = re.split(r"[\s,;]+", raw_urls)
+        urls = [str(u).strip() for u in raw_urls if str(u).strip()][:30]
+        if not urls:
+            raise HTTPException(
+                status_code=400,
+                detail="Укажите сайты (домены или ссылки) для перебора скрытых папок",
+            )
+        h_depth = max(0, min(int(body.get("depth", 2) or 0), 3))
+        params.update(urls=urls, depth=h_depth,
+                      max_files=max(3, min(int(body.get("max_files", 40)), 150)))
+        label = (f"Скрытые папки: {len(urls)} сайт(ов) — .git/.env/backup…"
+                 + (f" — глубина {h_depth}" if h_depth else ""))
     elif mode == "commoncrawl":
         mask = str(body.get("mask", "") or "").strip()
         if not mask:

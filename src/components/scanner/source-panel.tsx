@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Archive, Database, FileSearch, FolderOpen, FolderSearch, Globe, Github, Link2, Loader2, Radar, RotateCcw, Search, Sparkles } from "lucide-react";
+import { Archive, Database, EyeOff, FileSearch, FolderOpen, FolderSearch, Globe, Github, Link2, Loader2, Radar, RotateCcw, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +33,7 @@ const GLOBAL_MODES: { id: GlobalMode; label: string; icon: typeof Archive; hint:
   { id: "archive", label: "Архивы", icon: Archive, hint: "домен целиком из веб-архива" },
   { id: "dorks", label: "Dork-поиск", icon: FileSearch, hint: "открытые каталоги и файлы" },
   { id: "indexof", label: "Index of", icon: FolderSearch, hint: "обход открытых каталогов" },
+  { id: "hidden", label: "Скрытые папки", icon: EyeOff, hint: ".git, .env, backup, дампы" },
   { id: "commoncrawl", label: "Common Crawl", icon: Database, hint: "миллиарды URL по маске" },
   { id: "github", label: "GitHub", icon: Github, hint: "утечки в коде и гистах" },
 ];
@@ -125,6 +126,7 @@ export function SourcePanel({
   const [gIoUrls, setGIoUrls] = useState("");
   const [gIoKeywords, setGIoKeywords] = useState("");
   const [gIoListings, setGIoListings] = useState(15);
+  const [gHidUrls, setGHidUrls] = useState("");
 
   useEffect(() => {
     getPresets()
@@ -161,6 +163,7 @@ export function SourcePanel({
   const gIoOk =
     gIoUrls.trim().length > 0 ||
     (gIoKeywords.trim().length > 0 && gEngines.length > 0);
+  const gHidOk = gHidUrls.split(/\n/).map((s) => s.trim()).filter(Boolean).length > 0;
   const gCanStart =
     gMode === "archive"
       ? gDomain.trim().length > 0
@@ -168,9 +171,11 @@ export function SourcePanel({
         ? gDorkOk && gEngines.length > 0
         : gMode === "indexof"
           ? gIoOk
-          : gMode === "commoncrawl"
-            ? gMask.trim().length > 0
-            : gGhOk && gToken.trim().length > 0;
+          : gMode === "hidden"
+            ? gHidOk
+            : gMode === "commoncrawl"
+              ? gMask.trim().length > 0
+              : gGhOk && gToken.trim().length > 0;
 
   const startGlobal = () => {
     if (gMode === "archive") {
@@ -181,6 +186,9 @@ export function SourcePanel({
       const urls = gIoUrls.split(/\n/).map((s) => s.trim()).filter(Boolean);
       const keywords = gIoKeywords.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
       onGlobal({ mode: "indexof", urls, keywords, engines: gEngines, depth: Number(gDepth), max_urls: gIoListings, max_files: Math.max(gMaxFiles, 40) });
+    } else if (gMode === "hidden") {
+      const urls = gHidUrls.split(/\n/).map((s) => s.trim()).filter(Boolean);
+      onGlobal({ mode: "hidden", urls, depth: Number(gDepth), max_files: Math.max(gMaxFiles, 40) });
     } else if (gMode === "commoncrawl") {
       onGlobal({ mode: "commoncrawl", mask: gMask.trim(), depth: Number(gDepth), max_urls: gMaxUrls });
     } else {
@@ -409,7 +417,7 @@ export function SourcePanel({
 
       <TabsContent value="global" className="mt-4 space-y-4">
         {/* выбор режима */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
           {GLOBAL_MODES.map((m) => {
             const Icon = m.icon;
             const on = gMode === m.id;
@@ -673,6 +681,55 @@ export function SourcePanel({
               в QR-сканер, txt/json/zip/pdf — в детекторы строк), раскрывает подкаталоги и
               приоритизирует имена с wallet/seed/keys. Работает и в других режимах: наткнувшись
               на «Index of», конвейер обходит его целиком.
+            </p>
+          </div>
+        )}
+
+        {/* --- Режим: Скрытые папки --- */}
+        {gMode === "hidden" && (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="g-hid-urls" className="text-zinc-300">Сайты (по одному в строке)</Label>
+              <Textarea
+                id="g-hid-urls"
+                rows={4}
+                placeholder={"example.com\nhttp://192.168.1.10:8080/\nfiles.example.org/backup/"}
+                value={gHidUrls}
+                onChange={(e) => setGHidUrls(e.target.value)}
+                disabled={busy}
+                className="bg-zinc-950/60 border-zinc-800 font-mono text-sm"
+              />
+              <p className="text-xs text-zinc-500">
+                Домен или ссылка; если указан путь — перебор пойдёт внутри него. Локальные
+                адреса тоже можно — корни указываете вы, им доверяем.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-zinc-300">Обход найденных каталогов</Label>
+              <Select value={gDepth} onValueChange={setGDepth} disabled={busy}>
+                <SelectTrigger className="bg-zinc-950/60 border-zinc-800">
+                  <SelectValue placeholder="Глубина обхода" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-900 border-zinc-800">
+                  <SelectItem value="0">Только файлы верхнего уровня</SelectItem>
+                  <SelectItem value="1">1 уровень подкаталогов</SelectItem>
+                  <SelectItem value="2">2 уровня</SelectItem>
+                  <SelectItem value="3">3 уровня</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Файлов всего: {Math.max(gMaxFiles, 40)}</Label>
+                <Slider value={[gMaxFiles]} min={3} max={120} step={1} onValueChange={(v) => setGMaxFiles(v[0])} disabled={busy} />
+              </div>
+            </div>
+            <p className="rounded-md border border-violet-500/30 bg-violet-500/10 p-2 text-xs text-violet-300">
+              Скрытое не индексируется и в листинги не попадает — пробуются типовые имена:
+              репозитории (.git, .svn, .hg), окружения и конфиги (.env, .htaccess, .htpasswd),
+              системный .DS_Store (из него достаются имена файлов) и каталоги backup/, dump/,
+              db/, wallet/, keys/, secret/… Найденный листинг обходится целиком, файлы идут в
+              детекторы строк; пути, закрытые 401/403, помечаются как существующие.
             </p>
           </div>
         )}

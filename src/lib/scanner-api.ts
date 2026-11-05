@@ -219,7 +219,7 @@ export async function scanSite(params: {
   return handle<{ job_id: string; url: string; archive: string; max_num: number }>(res);
 }
 
-export type GlobalMode = "archive" | "dorks" | "indexof" | "commoncrawl" | "github";
+export type GlobalMode = "archive" | "dorks" | "indexof" | "hidden" | "commoncrawl" | "github";
 
 export interface GlobalPresets {
   dorks: Record<string, Preset & { queries: { dork: string; plain: string }[] }>;
