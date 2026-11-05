@@ -42,6 +42,7 @@ from engine.globalsearch import (
     DORK_ENGINE_LABELS,
     DORK_PRESETS,
     GITHUB_PRESETS,
+    SERPS,
     get_domain_state,
     reset_domain_state,
     run_global,
@@ -69,7 +70,7 @@ BASE_DIR = Path(__file__).resolve().parent
 JOBS_DIR = BASE_DIR / "jobs"
 JOBS_DIR.mkdir(exist_ok=True)
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 app = FastAPI(title="WebCryptoScan scanner service", version=VERSION)
 app.add_middleware(
@@ -433,6 +434,7 @@ def _worker(job_id: str, items: list[tuple[Path, str]], crawl_params: dict | Non
             job["status"] = "crawling"
             job["phase"] = "crawl"
             _save_job(job)
+            web_ran = False
             if crawl_params.get("mode") == "site":
                 params = {k: v for k, v in crawl_params.items() if k != "mode"}
                 res = parse_site(JOBS_DIR / job_id / "images", **params)
@@ -447,16 +449,51 @@ def _worker(job_id: str, items: list[tuple[Path, str]], crawl_params: dict | Non
                 gp["mode"] = str(crawl_params.get("global_mode", "archive"))
                 res = run_global(JOBS_DIR / job_id, gp, progress=_prog)
             else:
-                res = crawl_images(JOBS_DIR / job_id / "images", **crawl_params)
+                # классический краулер: две фазы — веб-поиск (страницы/файлы) и картинки
+                res: dict = {}
+                web_engines = [e for e in (crawl_params.get("web_engines") or []) if e in SERPS]
+                if web_engines:
+                    web_ran = True
+
+                    def _wprog(stage: str, done: int, total: int) -> None:
+                        job["progress"] = {"total": max(1, total), "processed": done}
+                        job["crawl_stage"] = stage
+                        if done == 0 or done % 5 == 0 or done == total:
+                            _save_job(job)
+
+                    job["crawl_stage"] = "Веб-поиск: страницы и файлы…"
+                    _save_job(job)
+                    try:
+                        web_res = run_global(JOBS_DIR / job_id, {
+                            "mode": "keywords",
+                            "keywords": crawl_params.get("keyword_list") or [],
+                            "engines": web_engines,
+                            "max_pages": crawl_params.get("max_pages", 10),
+                            "max_files": crawl_params.get("max_files", 24),
+                        }, progress=_wprog)
+                        res["sources"] = web_res.get("sources") or {}
+                        res["web"] = {k: web_res.get(k, 0)
+                                      for k in ("images", "docs", "pages", "total")}
+                    except Exception as e:  # noqa: BLE001 — веб-фаза не роняет картинки
+                        traceback.print_exc()
+                        res["web_error"] = f"{type(e).__name__}: {str(e)[:160]}"
+                img_params = {k: v for k, v in crawl_params.items()
+                              if k not in ("mode", "web_engines", "max_pages", "max_files")}
+                res.update(crawl_images(JOBS_DIR / job_id / "images", **img_params))
             job["crawl"] = res
             image_paths = collect_image_paths(JOBS_DIR / job_id / "images")
-            if crawl_params.get("mode") == "global":
+            is_global = crawl_params.get("mode") == "global"
+            if is_global or web_ran:
                 # файлы из files/ — строковый анализ; подмножество pages/ — как страницы
                 doc_paths = collect_document_paths(JOBS_DIR / job_id / "files") \
                     if job["options"].get("scan_strings", True) else []
                 items = [(p, "image") for p in image_paths] + [(p, "doc") for p in doc_paths]
             else:
-                items = [(p, "image") for p in image_paths]
+                # сайт тоже может спрятать файлы (seed.txt, wallet.dat...)
+                files_dir = JOBS_DIR / job_id / "files"
+                doc_paths = collect_document_paths(files_dir) \
+                    if files_dir.is_dir() and job["options"].get("scan_strings", True) else []
+                items = [(p, "image") for p in image_paths] + [(p, "doc") for p in doc_paths]
 
             # текст страницы (сайт/архив) — тоже источник строковых значений
             if job["options"].get("scan_strings", True) and crawl_params.get("mode") == "site":
@@ -465,8 +502,9 @@ def _worker(job_id: str, items: list[tuple[Path, str]], crawl_params: dict | Non
                 if page_text:
                     _process_page_text(job, page_url, page_text, "видимый текст страницы")
 
-            # страницы глобального поиска: манифест pages/manifest.json
-            if job["options"].get("scan_strings", True) and crawl_params.get("mode") == "global":
+            # страницы веб-фазы/глобального поиска/сайта (pdf-текст): pages/manifest.json
+            if job["options"].get("scan_strings", True) and (
+                    is_global or web_ran or crawl_params.get("mode") == "site"):
                 mf = JOBS_DIR / job_id / "pages" / "manifest.json"
                 if mf.is_file():
                     try:
@@ -487,6 +525,7 @@ def _worker(job_id: str, items: list[tuple[Path, str]], crawl_params: dict | Non
 
         job["status"] = "running"
         job["phase"] = "scan"
+        job["crawl_stage"] = None
         job["progress"]["total"] = len(items)
         job["progress"]["processed"] = 0
         _save_job(job)
@@ -659,7 +698,12 @@ def scan_crawl(body: dict):
     if not isinstance(engines, list):
         raise HTTPException(status_code=400, detail="engines: ожидался список")
     engines = [e for e in engines if e in ENGINE_NAMES]
-    if not engines:
+    # веб-фаза: обычный (текстовый) поиск по тем же ключевым словам
+    web_raw = body.get("web_engines") or []
+    if not isinstance(web_raw, list):
+        raise HTTPException(status_code=400, detail="web_engines: ожидался список")
+    web_engines = [e for e in web_raw if isinstance(e, str) and e in SERPS]
+    if not engines and not web_engines:
         raise HTTPException(status_code=400, detail="Не выбрана ни одна поисковая система")
 
     preset = str(body.get("preset", "") or "")
@@ -680,9 +724,16 @@ def scan_crawl(body: dict):
     label = f"Краулер: {custom or PRESETS.get(preset, {}).get('label', preset)}"
     job = _new_job(label=label, source_type="crawl", options=opts)
     job["progress"]["total"] = len(keywords)
-    crawl_params = {"keyword_list": keywords, "engines": engines, "max_num": max_num}
+    crawl_params = {
+        "keyword_list": keywords, "engines": engines, "max_num": max_num,
+        "web_engines": web_engines,
+        # глубина веб-фазы масштабируется от общего лимита
+        "max_pages": max(3, min(max_num // 3, 15)),
+        "max_files": max(5, min(max_num, 40)),
+    }
     _start_job(job, [], crawl_params)
-    return {"job_id": job["id"], "keywords": keywords, "max_num": max_num}
+    return {"job_id": job["id"], "keywords": keywords, "max_num": max_num,
+            "web_engines": web_engines}
 
 
 @app.post("/api/scan/site")

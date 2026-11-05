@@ -856,6 +856,8 @@ def serp_baidu(query: str, max_results: int = 20) -> dict:
 
 SERPS = {"bing": serp_bing, "duckduckgo": serp_duckduckgo, "baidu": serp_baidu,
          "marginalia": serp_marginalia}
+SERP_LABELS = {"bing": "Bing", "marginalia": "Marginalia", "baidu": "Baidu",
+               "duckduckgo": "DuckDuckGo"}
 # движки, которым операторы не по зубам из дата-центров (им отдаём plain-вариант запроса)
 PLAIN_ONLY_ENGINES = {"bing", "marginalia"}
 
@@ -963,16 +965,65 @@ def _load_doc_hashes(files_dir: Path) -> set[str]:
     return out
 
 
+def _fetch_serp_pages(urls: list[str], store: _Store, max_pages: int, max_files: int,
+                      prog: Callable[[str, int, int], None], label: str) -> int:
+    """Загружает выдачу текстового поиска: страницы + файлы из листингов каталогов.
+
+    Страницы попадают в pages/ (видимый текст), попутные картинки — в images/,
+    документы (txt/json/pdf/zip) — в files/. Из страниц-листингов (index of)
+    дополнительно вычитываются прямые ссылки на файлы. Возвращает суммарное
+    число сохранённых находок (картинки + документы + страницы).
+    """
+    saved_total = 0
+    pages_done = 0
+    for u in urls:
+        if pages_done >= max_pages:
+            break
+        before = dict(store.counters)
+        try:
+            r = requests.get(u, headers=_HEADERS, timeout=(12, 30), stream=True)
+            if r.status_code in (403, 429):
+                store.counters["blocked"] += 1
+                continue
+            if r.status_code != 200:
+                continue
+            data = r.content
+            if not data or len(data) > MAX_ITEM_BYTES:
+                continue
+            ct = r.headers.get("content-type", "")
+            kind = _route_bytes(data, ct, u, store)
+            if kind == "page" and store.counters["docs"] < max_files:
+                # из листингов каталогов тянем файлы
+                links = file_links_from_html(data.decode("utf-8", errors="replace")[:2_000_000], u)
+                for link in links:
+                    if store.counters["docs"] >= max_files:
+                        break
+                    if link in store.saved_urls:
+                        continue
+                    _fetch_item(link, store)
+            pages_done += 1
+        except Exception:  # noqa: BLE001 — одна битая ссылка не роняет джобу
+            continue
+        finally:
+            saved_total += sum(store.counters[k] - before[k]
+                               for k in ("images", "docs", "pages"))
+        prog(f"{label}: {pages_done}/{max_pages}", pages_done, max_pages)
+    return saved_total
+
+
 def run_global(job_dir: Path, params: dict, progress=None) -> dict:
     """Глобальный поиск: перечисление URL источником -> универсальная загрузка.
 
+    Режим keywords — обычный веб-поиск по ключевым словам (веб-фаза классического
+    краулера): те же запросы, что и для картинок, но через текстовые SERP.
     progress(stage, done, total) — колбэк для UI-прогресса.
     Возвращает структуру для job['crawl'].
     """
     job_dir = Path(job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
     mode = str(params.get("mode", "archive"))
-    prefix = {"archive": "arx", "dorks": "drk", "commoncrawl": "cc", "github": "gh"}.get(mode, "gl")
+    prefix = {"archive": "arx", "dorks": "drk", "commoncrawl": "cc", "github": "gh",
+              "keywords": "web"}.get(mode, "gl")
 
     def prog(stage: str, done: int, total: int) -> None:
         if progress:
@@ -1112,38 +1163,42 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
                 prog(f"Поиск: {eng} — запрос {done}/{total_q}", done, total_q)
             urls = list(dict.fromkeys(urls))
             stats["urls_found"] = len(urls)
-            pages_done = 0
-            for u in urls:
-                if pages_done >= max_pages:
-                    break
-                before = dict(store.counters)
+            stats["count"] = _fetch_serp_pages(
+                urls, store, max_pages, max_files, prog, "Загрузка находок")
+            result["sources"][eng] = stats
+
+    elif mode == "keywords":
+        # Обычный веб-поиск по ключевым словам — веб-фаза классического краулера.
+        # Краулер больше не зациклен на картинках: те же запросы уходят в текстовые
+        # SERP, страницы и файлы из выдачи (txt/json/pdf/zip) — в строковый анализ.
+        keywords = [str(k).strip() for k in (params.get("keywords") or [])
+                    if str(k).strip()][:10]
+        engines = [e for e in (params.get("engines") or ["bing"]) if e in SERPS] or ["bing"]
+        max_pages = max(3, min(int(params.get("max_pages", 10)), 30))
+        max_files = max(3, min(int(params.get("max_files", 24)), 60))
+
+        for eng in engines:
+            stats: dict = {"count": 0, "error": None, "urls_found": 0}
+            # Marginalia троттлит публичный ключ — не более двух запросов за джобу
+            queries = keywords[:2] if eng == "marginalia" else keywords
+            urls: list[str] = []
+            for i, kw in enumerate(queries):
                 try:
-                    r = requests.get(u, headers=_HEADERS, timeout=(12, 30), stream=True)
-                    if r.status_code in (403, 429):
-                        store.counters["blocked"] += 1
-                        continue
-                    if r.status_code != 200:
-                        continue
-                    data = r.content
-                    if not data or len(data) > MAX_ITEM_BYTES:
-                        continue
-                    ct = r.headers.get("content-type", "")
-                    kind = _route_bytes(data, ct, u, store)
-                    if kind == "page" and store.counters["docs"] < max_files:
-                        # из листингов каталогов тянем файлы
-                        links = file_links_from_html(data.decode("utf-8", errors="replace")[:2_000_000], u)
-                        for link in links:
-                            if store.counters["docs"] >= max_files:
-                                break
-                            if link in store.saved_urls:
-                                continue
-                            _fetch_item(link, store)
-                    pages_done += 1
-                except Exception:  # noqa: BLE001
-                    continue
-                finally:
-                    stats["count"] += sum(store.counters[k] - before[k] for k in ("images", "docs", "pages"))
-                prog(f"Загрузка находок: {pages_done}/{max_pages}", pages_done, max_pages)
+                    res = SERPS[eng](kw, 15)
+                except Exception as e:  # noqa: BLE001
+                    res = {"urls": [], "error": f"{type(e).__name__}"}
+                urls += res["urls"]
+                if res["error"]:
+                    stats["error"] = res["error"]
+                prog(f"Веб-поиск: {eng} — запрос {i + 1}/{len(queries)}",
+                     i + 1, max(1, len(queries)))
+            # приоритизация: URL со словами про кошельки/ключи — наверх очереди
+            urls = sorted(dict.fromkeys(urls), key=_url_priority_score, reverse=True)
+            stats["urls_found"] = len(urls)
+            if not urls and not stats["error"]:
+                stats["error"] = f"{SERP_LABELS.get(eng, eng)}: выдача пуста"
+            stats["count"] = _fetch_serp_pages(
+                urls, store, max_pages, max_files, prog, f"Веб-поиск: {eng} — загрузка")
             result["sources"][eng] = stats
 
     elif mode == "commoncrawl":

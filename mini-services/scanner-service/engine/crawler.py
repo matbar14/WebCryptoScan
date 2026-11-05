@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-WebCryptoScan — краулер изображений: 9 поисковых систем.
+WebCryptoScan — краулер: фото-канал (9 поисковых систем картинок).
 
 Движки:
   icrawler (встроенные) : Google, Bing, Baidu
   кастомные (requests)  : 360 Поиск, Sogou, DuckDuckGo, Яндекс, Openverse, Wikimedia
 
+Веб-канал (страницы и файлы по тем же ключевым словам) живёт в globalsearch.py
+(режим keywords) — здесь только поиск и скачивание изображений.
+
 Каждый движок обрабатывается независимо: ошибка или анти-бот блокировка одного
-не ломает остальные и честно попадает в отчёт джобы. Дедупlication по md5:
+не ломает остальные и честно попадает в отчёт джобы. Дедупликация по md5:
 одна и та же картинка не скачается дважды разными движками.
 
 Пресеты включают наборы для поиска фото с сид-фразами (bip39/seed phrase),
@@ -338,21 +341,33 @@ def crawl_images(target_dir: Path, keyword_list: list[str], engines: list[str],
 
     Возвращает {"keywords": {kw: {"engines": {...}, "total": N}}, "total": N}.
     """
-    from icrawler.builtin import BaiduImageCrawler, BingImageCrawler, GoogleImageCrawler
-
     target_dir.mkdir(parents=True, exist_ok=True)
     result: dict = {"keywords": {}, "total": 0}
-    crawler_map = {
-        "google": GoogleImageCrawler,
-        "bing": BingImageCrawler,
-        "baidu": BaiduImageCrawler,
-    }
+    # icrawler — тяжёлая опциональная зависимость: импорт только если выбран
+    # движок, который его требует (веб-онли запуск работает без него)
+    crawler_map = {}
+    if any(name in ("google", "bing", "baidu") for name in engines):
+        try:
+            from icrawler.builtin import BaiduImageCrawler, BingImageCrawler, GoogleImageCrawler
+
+            crawler_map = {
+                "google": GoogleImageCrawler,
+                "bing": BingImageCrawler,
+                "baidu": BaiduImageCrawler,
+            }
+        except Exception:  # noqa: BLE001 — нет icrawler: честная ошибка будет на каждом движке
+            crawler_map = {}
     seen = _load_seen_hashes(target_dir)
 
     for kw_idx, kw in enumerate(keyword_list):
         kw_info: dict = {"engines": {}, "total": 0}
         for name in engines:
             if name not in crawler_map and name not in CUSTOM_SEARCH:
+                if name in ("google", "bing", "baidu") and not crawler_map:
+                    kw_info["engines"][name] = {
+                        "count": 0,
+                        "error": "icrawler не установлен (pip install icrawler) — движок недоступен",
+                    }
                 continue
             info = {"count": 0, "error": None}
             before = _count_images(target_dir)

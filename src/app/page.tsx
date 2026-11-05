@@ -119,12 +119,13 @@ export default function Home() {
   );
 
   const onCrawl = useCallback(
-    (p: { keyword: string; preset: string; engines: string[]; maxNum: number }) =>
+    (p: { keyword: string; preset: string; engines: string[]; webEngines: string[]; maxNum: number }) =>
       runJob(() =>
         scanCrawl({
           keyword: p.keyword || undefined,
           preset: p.preset || undefined,
           engines: p.engines,
+          web_engines: p.webEngines,
           max_num: p.maxNum,
           options,
         }).then((r) => r.job_id),

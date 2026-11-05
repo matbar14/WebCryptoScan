@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-WebCryptoScan — парсер сайтов: скачиваем изображения со страницы и отправляем
-их в общий скан-конвейер.
+WebCryptoScan — парсер сайтов: скачиваем изображения и файлы-документы со страницы.
 
 Логика:
   1. Загружаем HTML страницы напрямую (requests).
@@ -9,7 +8,9 @@ WebCryptoScan — парсер сайтов: скачиваем изображе
      снапшот из Wayback Machine (archive.org/wayback/available).
   3. Извлекаем URL картинок: <img src/data-src/srcset>, <source srcset>,
      og:image, link rel=image_src + regex-фолбэк по сырому HTML.
-  4. Скачивание — общий конвейер crawler._download_images (валидация, дедуп).
+  4. Вычитываем ссылки на документы (seed.txt, wallet.dat, pdf, zip) и скачиваем
+     их универсальным конвейером — текстовый анализ без QR.
+  5. Скачивание картинок — общий конвейер crawler._download_images (валидация, дедуп).
 
 Для архивных страниц ссылки на картинки web.archive.org отдаёт сам — их
 качаем как есть; прямые ссылки на оригинал оставляем без перезаписи.
@@ -135,10 +136,11 @@ def extract_image_urls(html: str, base_url: str) -> list[str]:
 
 
 def parse_site(target_dir, url: str, max_num: int, archive: str = "auto") -> dict:
-    """Скачивает изображения со страницы (или её снапшота в веб-архиве).
+    """Скачивает изображения и файлы-документы со страницы (или её снапшота в архиве).
 
     archive: auto (прямая, при неудаче архив) | yes (только архив) | no (прямая).
-    Возвращает формат как у crawl_images — совместим с UI джобы:
+    Картинки идут в QR/OCR-конвейер, файлы (seed.txt, wallet.dat, pdf, zip) —
+    в строковый анализ. Возвращает формат как у crawl_images — совместим с UI:
       {"keywords": {url: {"engines": {"site": {...}}, "total": N}}, "total": N}
     """
     from pathlib import Path
@@ -197,19 +199,45 @@ def parse_site(target_dir, url: str, max_num: int, archive: str = "auto") -> dic
         return result
 
     urls = extract_image_urls(html, page_url)
+
+    # --- Файлы со страницы: seed.txt, wallet.dat, pdf, zip... ---------------------
+    # Парсер не должен быть зациклен на картинках: ссылки на документы вычитываются
+    # и раскладываются универсальным конвейером (pdf -> текст + страницы в QR-скан).
+    files_saved = 0
+    try:
+        # ленивый импорт: globalsearch сам импортирует sitespider на верхнем уровне
+        from .globalsearch import _Store, _fetch_item, _load_doc_hashes, file_links_from_html
+
+        store = _Store(target_dir.parent, "site", _load_seen_hashes(target_dir))
+        store.doc_hashes = _load_doc_hashes(target_dir.parent / "files")
+        for link in file_links_from_html(html, page_url, limit=12):
+            if link in store.saved_urls:
+                continue
+            _fetch_item(link, store)
+        files_saved = store.counters["docs"]
+        if store.pages:
+            store.write_manifest(target_dir.parent)
+    except Exception:  # noqa: BLE001 — файлы не скачались, картинки всё равно сканируются
+        files_saved = 0
+
     if not urls:
         info["error"] = "на странице не найдено изображений (возможно, они подгружаются скриптами)"
+        if files_saved:
+            info["note"] = f"со страницы скачано файлов: {files_saved}"
         result["keywords"][target] = {"engines": {"site": info}, "total": 0}
         return result
 
-    seen = _load_seen_hashes(target_dir)
-    saved, blocked = _download_images(urls, target_dir, "site_k00", max_num, seen)
+    seen2 = _load_seen_hashes(target_dir)
+    saved, blocked = _download_images(urls, target_dir, "site_k00", max_num, seen2)
     info["count"] = saved
     info["note"] = note
+    if files_saved:
+        info["note"] = f"{note}; " if note else ""
+        info["note"] += f"со страницы скачано файлов: {files_saved}"
     if saved == 0:
         if blocked >= 2:
             info["error"] = "хост с картинками отдаёт 403/429 — блокировка IP дата-центра"
-        else:
+        elif not files_saved:
             info["error"] = (
                 f"найдено {len(urls)} ссылок на изображения, но ни одна не скачалась "
                 "(мёртвые хосты, неподдерживаемый формат или дубликаты)"

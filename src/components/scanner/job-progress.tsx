@@ -18,10 +18,10 @@ function phaseLabel(job: Job): string {
   const isGlobal = job.source_type.startsWith("global_");
   if (job.status === "queued") return "В очереди…";
   if (job.status === "crawling") {
-    if (isGlobal && job.crawl_stage) return job.crawl_stage;
-    return isGlobal ? "Глобальный поиск…" : "Поиск изображений в поисковых системах…";
+    if (job.crawl_stage) return job.crawl_stage;
+    return isGlobal ? "Глобальный поиск…" : "Поиск фото и страниц в поисковых системах…";
   }
-  if (job.status === "running") return "Сканирование изображений…";
+  if (job.status === "running") return "Сканирование материалов…";
   if (job.status === "done") return "Готово";
   if (job.status === "error") return "Ошибка";
   return job.status;
@@ -58,9 +58,9 @@ export function JobProgress({ job }: { job: Job }) {
       <Progress value={pct} className="h-2 bg-zinc-800 [&>div]:bg-emerald-400" aria-label="Прогресс сканирования" />
 
       {(job.status === "crawling" || job.status === "running" || job.status === "done") &&
-        job.source_type.startsWith("global_") && (
+        job.crawl?.sources && Object.keys(job.crawl.sources).length > 0 && (
         <div className="space-y-1 rounded-md border border-zinc-800 bg-zinc-950/60 p-2 text-xs font-mono text-zinc-400">
-          {Object.entries(job.crawl?.sources ?? {}).map(([src, info]) => (
+          {Object.entries(job.crawl.sources).map(([src, info]) => (
             <div key={src} className="flex items-center gap-1.5">
               <Database className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden />
               <span className="shrink-0 text-zinc-300">{SOURCE_RU[src] ?? src}</span>
@@ -68,11 +68,21 @@ export function JobProgress({ job }: { job: Job }) {
               {info.error && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" aria-hidden />}
             </div>
           ))}
-          {Object.values(job.crawl?.sources ?? {})
-            .filter((e) => e.error || e.note)
-            .map((e, i) => (
+          {job.crawl.web && (
+            <div className="truncate text-[11px] text-sky-400/80">
+              ⓘ веб-поиск: страниц {job.crawl.web.pages} · файлов {job.crawl.web.docs} · картинок {job.crawl.web.images}
+            </div>
+          )}
+          {[
+            job.crawl.web_error || null,
+            ...Object.values(job.crawl.sources ?? {})
+              .filter((e) => e.error || e.note)
+              .map((e) => e.error ?? e.note ?? null),
+          ]
+            .filter((m): m is string => Boolean(m))
+            .map((msg, i) => (
               <div key={i} className="truncate text-[11px] text-amber-400/80">
-                ⓘ {e.error ?? e.note}
+                ⓘ {msg}
               </div>
             ))}
         </div>

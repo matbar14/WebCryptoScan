@@ -46,6 +46,9 @@ export interface CrawlInfo {
     { engines: Record<string, { count: number; error: string | null; note?: string | null }>; total: number }
   >;
   total?: number;
+  // веб-фаза классического краулера (страницы и файлы по ключевым словам)
+  web?: { images: number; docs: number; pages: number; total: number };
+  web_error?: string;
   // глобальный поиск (mode = archive | dorks | commoncrawl | github)
   mode?: string;
   sources?: Record<string, { count: number; error?: string | null; note?: string | null; [k: string]: unknown }>;
@@ -190,9 +193,10 @@ export async function scanCrawl(params: {
   keyword?: string;
   preset?: string;
   engines: string[];
+  web_engines?: string[];
   max_num: number;
   options: ScanOptions;
-}): Promise<{ job_id: string; keywords: string[]; max_num: number }> {
+}): Promise<{ job_id: string; keywords: string[]; max_num: number; web_engines?: string[] }> {
   const res = await fetch(apiUrl("scan/crawl"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },

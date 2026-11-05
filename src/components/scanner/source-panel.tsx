@@ -47,6 +47,14 @@ const ENGINE_LIST: { id: string; label: string; hint: string }[] = [
   { id: "openverse", label: "Openverse", hint: "CC-изображения" },
 ];
 
+// веб-фаза краулера: текстовый поиск по тем же ключевым словам (страницы и файлы)
+const WEB_ENGINE_LIST: { id: string; label: string; hint: string }[] = [
+  { id: "bing", label: "Bing", hint: "из дата-центров" },
+  { id: "marginalia", label: "Marginalia", hint: "независимый индекс, из дата-центров" },
+  { id: "duckduckgo", label: "DuckDuckGo", hint: "на локальной машине" },
+  { id: "baidu", label: "Baidu", hint: "на локальной машине" },
+];
+
 export function SourcePanel({
   active,
   onActiveChange,
@@ -62,7 +70,7 @@ export function SourcePanel({
   busy: boolean;
   onUpload: (files: File[]) => void;
   onFolder: (path: string) => void;
-  onCrawl: (p: { keyword: string; preset: string; engines: string[]; maxNum: number }) => void;
+  onCrawl: (p: { keyword: string; preset: string; engines: string[]; webEngines: string[]; maxNum: number }) => void;
   onSite: (p: { url: string; archive: "auto" | "yes" | "no"; maxNum: number }) => void;
   onGlobal: (p: {
     mode: GlobalMode;
@@ -86,6 +94,7 @@ export function SourcePanel({
   const [preset, setPreset] = useState("");
   const [presets, setPresets] = useState<Record<string, Preset>>({});
   const [engines, setEngines] = useState<string[]>(["baidu", "so360", "duckduckgo", "wikimedia"]);
+  const [webEngines, setWebEngines] = useState<string[]>(["bing", "marginalia"]);
   const [maxNum, setMaxNum] = useState(30);
   const [siteUrl, setSiteUrl] = useState("");
   const [siteArchive, setSiteArchive] = useState<"auto" | "yes" | "no">("auto");
@@ -264,7 +273,7 @@ export function SourcePanel({
         </div>
 
         <div className="space-y-2">
-          <Label className="text-zinc-300">Поисковые системы ({engines.length}/9)</Label>
+          <Label className="text-zinc-300">Поиск картинок ({engines.length}/9)</Label>
           <div className="flex flex-wrap gap-x-4 gap-y-2">
             {ENGINE_LIST.map((eng) => (
               <label key={eng.id} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
@@ -282,23 +291,52 @@ export function SourcePanel({
           </p>
         </div>
 
+        <div className="space-y-2 rounded-md border border-zinc-800 bg-zinc-950/40 p-3">
+          <Label className="text-zinc-300">
+            Веб-поиск: страницы и файлы ({webEngines.length}/4)
+          </Label>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {WEB_ENGINE_LIST.map((eng) => (
+              <label key={eng.id} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                <Checkbox
+                  checked={webEngines.includes(eng.id)}
+                  onCheckedChange={() => toggleIn(setWebEngines, eng.id)}
+                  disabled={busy}
+                />
+                <span>
+                  {eng.label}
+                  <span className="ml-1 text-[10px] text-zinc-600">{eng.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-zinc-500">
+            Те же ключевые слова через обычный (не картинки) поиск: видимый текст страниц,
+            seed.txt, wallet.dat, JSON, CSV и PDF уходят в строковый анализ — детекторы
+            ключей, сид-фраз и адресов работают без изменений.
+          </p>
+        </div>
+
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label className="text-zinc-300">Фото на запрос: {maxNum}</Label>
+            <Label className="text-zinc-300">Лимит загрузки на запрос: {maxNum}</Label>
           </div>
           <Slider value={[maxNum]} min={5} max={200} step={5} onValueChange={(v) => setMaxNum(v[0])} disabled={busy} />
+          <p className="text-xs text-zinc-500">Фотографий на запрос; из того же числа считается лимит страниц и файлов веб-поиска.</p>
         </div>
 
         <Button
-          onClick={() => onCrawl({ keyword: keyword.trim(), preset, engines, maxNum })}
-          disabled={busy || (!keyword.trim() && !preset) || engines.length === 0}
+          onClick={() => onCrawl({ keyword: keyword.trim(), preset, engines, webEngines, maxNum })}
+          disabled={busy || (!keyword.trim() && !preset) || (engines.length === 0 && webEngines.length === 0)}
           className="w-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Globe className="h-4 w-4" aria-hidden />}
           Найти и просканировать
         </Button>
         <p className="text-xs text-zinc-500">
-          Краулер скачивает изображения из поиска, затем они автоматически проходят через сканер QR-кодов.
+          Краулер качает фото (QR + OCR) и одновременно ищет те же ключевые слова в обычном
+          веб-поиске: тексты страниц и файлы (txt/json/pdf/zip) автоматически проходят через
+          детекторы ключей, сид-фраз и адресов.
         </p>
       </TabsContent>
 
@@ -326,8 +364,9 @@ export function SourcePanel({
             </Button>
           </div>
           <p className="text-xs text-zinc-500">
-            Парсер собирает картинки со страницы и прогоняет их через сканер. Если сайт мёртв,
-            возьмём сохранённую копию из веб-архива (Wayback Machine) — удобно для старых
+            Парсер собирает со страницы картинки (QR + OCR), видимый текст и файлы-документы
+            (seed.txt, wallet.dat, PDF) — всё уходит в анализ. Если сайт мёртв, возьмём
+            сохранённую копию из веб-архива (Wayback Machine) — удобно для старых
             форумов и закрытых проектов.
           </p>
         </div>
