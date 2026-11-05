@@ -85,6 +85,12 @@ start.bat           # Windows (двойной клик или в cmd)
 Ручной вариант (если хочется по шагам):
 
 ```bash
+# 0. Node.js 20.9+ (если ещё нет — npm должен быть в PATH)
+#    без sudo:  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+#               затем в новом терминале:  nvm install 22
+#    с sudo:    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+#               sudo apt install -y nodejs
+
 # 1. Системные зависимости
 sudo apt install libzbar0 poppler-utils python3-venv curl   # Debian/Ubuntu
 # macOS: brew install zbar poppler

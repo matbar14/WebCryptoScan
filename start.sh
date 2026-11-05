@@ -55,6 +55,31 @@ cleanup() { if [ -n "$SVC_PID" ]; then kill "$SVC_PID" 2>/dev/null || true; fi; 
 trap cleanup EXIT INT TERM
 
 # --- 3. Фронтенд (:3000) --------------------------------------------------------
+# npm может жить вне PATH (nvm, snap, локальная установка) — аккуратно находим
+export PATH="$PATH:/usr/local/bin:/snap/bin:$HOME/.local/bin:$HOME/.npm-global/bin"
+if ! command -v npm >/dev/null 2>&1 && [ -s "$HOME/.nvm/nvm.sh" ]; then
+  log "npm не найден в PATH — пробую nvm…"
+  # shellcheck disable=SC1091
+  . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
+fi
+
+if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+  die "не найден Node.js/npm — для Next.js 16 нужен Node.js 20.9 или новее.
+  Установите одним из способов и снова запустите ./start.sh:
+    • без sudo (nvm):
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+        затем откройте новый терминал и выполните:  nvm install 22
+    • с sudo (NodeSource, репозиторий для Debian/Ubuntu):
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+        sudo apt install -y nodejs"
+fi
+
+NODE_MAJOR=$(node -v 2>/dev/null | sed -n 's/^v\([0-9]*\).*/\1/p')
+[ "${NODE_MAJOR:-0}" -ge 20 ] 2>/dev/null \
+  || die "Node.js $(node -v 2>/dev/null) слишком старый — Next.js 16 требует 20.9+.
+  Обновите:  nvm install 22   (или NodeSource: см. README, раздел «Запуск (локально)»)."
+
+log "Node.js $(node -v), npm $(npm -v)"
 if [ ! -d "$ROOT/node_modules" ]; then
   log "Ставлю зависимости фронтенда (npm ci)…"
   npm ci --no-audit --no-fund || npm install --no-audit --no-fund

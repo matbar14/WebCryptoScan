@@ -31,3 +31,10 @@ Thumbs.db
 
 # --- Delta state (runtime) ---
 mini-services/scanner-service/data/
+
+# --- Sandbox-local (не часть проекта) ---
+.secrets/
+upload/
+download/
+skills/
+examples/
