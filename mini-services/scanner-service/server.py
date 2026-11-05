@@ -92,6 +92,7 @@ DEFAULT_OPTIONS = {
     "detect_seedqr": True,
     "detect_electrum": True,
     "detect_addresses": True,
+    "keys_hex_wif_only": False,  # строгий режим: мастер-ключи пропускаем, ищем hex и WIF
     "ocr_fallback": True,    # OCR обычных фото (Tesseract), когда QR не найден
     "scan_strings": True,    # строковые значения: EXIF, текстовые файлы, строки, страницы
 }

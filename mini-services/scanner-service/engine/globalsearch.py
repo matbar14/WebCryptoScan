@@ -72,6 +72,9 @@ PRIORITIZE_KEYWORDS = (
     "ethereum", "monero", "xrp", "crypto", "secret", "coin",
     # скрытые папки и файлы
     ".git/", ".svn/", ".env", "htaccess", "htpasswd", "ds_store", "dump",
+    # файлы-контейнеры ключей (перебор скрытых путей)
+    "keys.txt", "wifs", "priv.txt", "privkeys", "keylist", "wallet.aes",
+    "hex_key", "key_backup", "unspent",
 )
 
 _KIND_RANK = {"image": 0, "doc": 1, "page": 2}
@@ -1067,36 +1070,48 @@ def walk_index_of(root: str, store: "_Store", *, depth: int = 2, max_items: int 
 # Найденные листинги отдаются обходчику каталогов, файлы — общему конвейеру
 # (детекторы строк + QR), «мягкие 404» (html-заглушки с кодом 200) отсекаются.
 
-# (путь, вид): file — ожидаем документ, dir — каталог (ожидаем листинг)
+# (путь, вид): file — ожидаем документ, dir — каталог (ожидаем листинг).
+# Порядок = приоритет перебора: сначала файлы-контейнеры ключей (цель — hex и
+# WIF), затем маркеры СКВ и окружений, затем типовые скрытые каталоги.
 _HIDDEN_PROBES: tuple[tuple[str, str], ...] = (
-    (".git/HEAD", "file"),      # маркер экспонированного git-репозитория
-    (".svn/entries", "file"),
-    (".svn/wc.db", "file"),
-    (".env", "file"),
-    (".env.local", "file"),
-    (".env.backup", "file"),
-    (".htaccess", "file"),
-    (".htpasswd", "file"),
-    (".DS_Store", "file"),
-    (".git/", "dir"),
-    (".svn/", "dir"),
-    (".hg/", "dir"),
-    ("backup/", "dir"),
-    ("backups/", "dir"),
-    ("old/", "dir"),
-    ("dump/", "dir"),
-    ("dumps/", "dir"),
-    ("db/", "dir"),
-    ("database/", "dir"),
-    ("private/", "dir"),
-    ("_private/", "dir"),
-    ("secret/", "dir"),
-    ("wallet/", "dir"),
-    ("wallets/", "dir"),
-    ("keys/", "dir"),
-    ("archive/", "dir"),
-    ("tmp/", "dir"),
-    ("data/", "dir"),
+    # --- файлы с ключами: цели именно hex и WIF (мастер-ключи пропускаются фильтром) ---
+    ("keys.txt", "file"), ("keys.json", "file"), ("key.txt", "file"),
+    ("keylist.txt", "file"), ("keys.bak", "file"), ("keys_backup.txt", "file"),
+    ("old_keys.txt", "file"), ("private_keys.txt", "file"), ("private-keys.txt", "file"),
+    ("privkeys.txt", "file"), ("privkey.txt", "file"), ("priv.txt", "file"),
+    ("private.txt", "file"), ("wifs.txt", "file"), ("wif.txt", "file"),
+    ("wif_keys.txt", "file"), ("hex.txt", "file"), ("hexkeys.txt", "file"),
+    ("hex_keys.txt", "file"), ("btc.txt", "file"), ("btc_keys.txt", "file"),
+    ("bitcoin.txt", "file"), ("wallet.txt", "file"), ("wallet.json", "file"),
+    ("wallets.txt", "file"), ("wallet.dat", "file"), ("wallet.bak", "file"),
+    ("wallet.aes.json", "file"), ("wallet.aes", "file"), ("dump.txt", "file"),
+    ("dump.json", "file"), ("export.txt", "file"), ("exported_keys.txt", "file"),
+    ("unspent.txt", "file"), ("paperwallet.txt", "file"), ("recovery.txt", "file"),
+    ("sensitive.txt", "file"), ("secrets.txt", "file"), ("secret.txt", "file"),
+    ("seeds.txt", "file"), ("seed.txt", "file"), ("backup.txt", "file"),
+    ("backup.json", "file"),
+    # --- системы контроля версий (часто выносят весь репо с конфигами) ---
+    (".git/HEAD", "file"), (".svn/entries", "file"), (".svn/wc.db", "file"),
+    (".hg/hgrc", "file"),
+    # --- окружения и серверные конфиги (секреты в переменных/паролях) ---
+    (".env", "file"), (".env.local", "file"), (".env.bak", "file"),
+    (".env.old", "file"), (".env.save", "file"), (".env.backup", "file"),
+    (".env.production", "file"), ("env.txt", "file"),
+    (".htaccess", "file"), (".htpasswd", "file"), (".DS_Store", "file"),
+    (".bash_history", "file"),
+    ("wp-config.php.bak", "file"), ("wp-config.php~", "file"), ("wp-config.php.old", "file"),
+    ("config.php.bak", "file"), ("config.php.old", "file"), ("configuration.php.bak", "file"),
+    ("settings.py.bak", "file"), ("database.yml", "file"), ("config.json.bak", "file"),
+    # --- каталоги: листинг отдаётся обходчику целиком ---
+    (".git/", "dir"), (".svn/", "dir"), (".hg/", "dir"),
+    ("backup/", "dir"), ("backups/", "dir"), ("_backup/", "dir"), ("bak/", "dir"),
+    ("old/", "dir"), ("dump/", "dir"), ("dumps/", "dir"), ("db/", "dir"),
+    ("database/", "dir"), ("private/", "dir"), ("_private/", "dir"),
+    ("secret/", "dir"), ("secrets/", "dir"),
+    ("wallet/", "dir"), ("wallets/", "dir"), ("keys/", "dir"), ("key/", "dir"),
+    ("keys_backup/", "dir"), ("wallet-backups/", "dir"),
+    ("electrum/", "dir"), ("bitcoin/", "dir"), (".bitcoin/", "dir"),
+    ("archive/", "dir"), ("tmp/", "dir"), ("temp/", "dir"), ("data/", "dir"),
 )
 
 # добирается только если .git/HEAD подтвердил репозиторий

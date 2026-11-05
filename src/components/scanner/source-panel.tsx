@@ -92,6 +92,7 @@ export function SourcePanel({
     max_urls?: number;
     max_pages?: number;
     max_files?: number;
+    keys_only?: boolean;
   }) => void;
 }) {
   const [folderPath, setFolderPath] = useState("");
@@ -127,6 +128,7 @@ export function SourcePanel({
   const [gIoKeywords, setGIoKeywords] = useState("");
   const [gIoListings, setGIoListings] = useState(15);
   const [gHidUrls, setGHidUrls] = useState("");
+  const [gHidKeysOnly, setGHidKeysOnly] = useState(true); // цель: hex и WIF, мастер-ключи пропускаем
 
   useEffect(() => {
     getPresets()
@@ -188,7 +190,7 @@ export function SourcePanel({
       onGlobal({ mode: "indexof", urls, keywords, engines: gEngines, depth: Number(gDepth), max_urls: gIoListings, max_files: Math.max(gMaxFiles, 40) });
     } else if (gMode === "hidden") {
       const urls = gHidUrls.split(/\n/).map((s) => s.trim()).filter(Boolean);
-      onGlobal({ mode: "hidden", urls, depth: Number(gDepth), max_files: Math.max(gMaxFiles, 40) });
+      onGlobal({ mode: "hidden", urls, depth: Number(gDepth), max_files: Math.max(gMaxFiles, 40), keys_only: gHidKeysOnly });
     } else if (gMode === "commoncrawl") {
       onGlobal({ mode: "commoncrawl", mask: gMask.trim(), depth: Number(gDepth), max_urls: gMaxUrls });
     } else {
@@ -724,12 +726,31 @@ export function SourcePanel({
                 <Slider value={[gMaxFiles]} min={3} max={120} step={1} onValueChange={(v) => setGMaxFiles(v[0])} disabled={busy} />
               </div>
             </div>
+            <div className="flex items-start gap-2.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2.5">
+              <Checkbox
+                id="g-hid-keys-only"
+                checked={gHidKeysOnly}
+                onCheckedChange={(v) => setGHidKeysOnly(v === true)}
+                disabled={busy}
+                className="mt-0.5 data-[state=checked]:border-emerald-500 data-[state=checked]:bg-emerald-500 data-[state=checked]:text-zinc-950"
+              />
+              <div>
+                <Label htmlFor="g-hid-keys-only" className="text-sm text-emerald-200">
+                  Искать только hex и WIF
+                </Label>
+                <p className="text-xs text-emerald-400/70">
+                  Мастер-ключи (сид-фразы BIP39/Electrum, SeedQR) и адреса пропускаем — цель:
+                  сырые hex-ключи и WIF. Адрес при ключе сохраняется.
+                </p>
+              </div>
+            </div>
             <p className="rounded-md border border-violet-500/30 bg-violet-500/10 p-2 text-xs text-violet-300">
-              Скрытое не индексируется и в листинги не попадает — пробуются типовые имена:
-              репозитории (.git, .svn, .hg), окружения и конфиги (.env, .htaccess, .htpasswd),
-              системный .DS_Store (из него достаются имена файлов) и каталоги backup/, dump/,
-              db/, wallet/, keys/, secret/… Найденный листинг обходится целиком, файлы идут в
-              детекторы строк; пути, закрытые 401/403, помечаются как существующие.
+              Перебор типовых скрытых путей (~90 имён на сайт): файлы-контейнеры ключей
+              (keys.txt, wifs.txt, privkey.txt, wallet.dat, wallet.aes.json, dump.txt…),
+              репозитории (.git, .svn, .hg), окружения и конфиги (.env*, .htaccess, .htpasswd,
+              wp-config.bak), системный .DS_Store (из него достаются имена файлов) и каталоги
+              backup/, dump/, wallet/, keys/, secret/… Найденный листинг обходится целиком,
+              файлы идут в детекторы строк; пути, закрытые 401/403, помечаются как существующие.
             </p>
           </div>
         )}

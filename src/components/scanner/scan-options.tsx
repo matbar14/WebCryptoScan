@@ -1,11 +1,17 @@
 "use client";
 
-import { Coins, FileText, KeyRound, ListChecks, ScanLine, Shapes, SlidersHorizontal, TextCursorInput } from "lucide-react";
+import { Coins, Crosshair, FileText, KeyRound, ListChecks, ScanLine, Shapes, SlidersHorizontal, TextCursorInput } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { ScanOptions } from "@/lib/scanner-api";
 
 const ITEMS: { key: keyof ScanOptions; label: string; hint: string; icon: React.ReactNode }[] = [
+  {
+    key: "keys_hex_wif_only",
+    label: "Только hex и WIF",
+    hint: "строгий режим: мастер-ключи (сиды), mini и адреса пропускаем — цель hex- и WIF-ключи",
+    icon: <Crosshair className="h-3.5 w-3.5" aria-hidden />,
+  },
   {
     key: "detect_wif",
     label: "WIF-ключи",
@@ -68,6 +74,13 @@ const ITEMS: { key: keyof ScanOptions; label: string; hint: string; icon: React.
   },
 ];
 
+// в строгом режиме эти детекторы перекрываются: WIF+hex включаются принудительно,
+// остальные выключаются
+const OVERRIDDEN = new Set<keyof ScanOptions>([
+  "detect_wif", "detect_mini", "detect_hex", "detect_seed", "detect_seedqr",
+  "detect_electrum", "detect_addresses",
+]);
+
 export function ScanOptionsCard({
   options,
   onChange,
@@ -77,6 +90,7 @@ export function ScanOptionsCard({
   onChange: (o: ScanOptions) => void;
   disabled?: boolean;
 }) {
+  const strict = options.keys_hex_wif_only;
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-1.5 text-sm font-medium text-zinc-300">
@@ -84,21 +98,33 @@ export function ScanOptionsCard({
         Что искать
       </div>
       <div className="divide-y divide-zinc-800/70">
-        {ITEMS.map((it) => (
-          <div key={it.key} className="flex items-center justify-between gap-3 py-2.5">
-            <div className="min-w-0">
-              <Label className="text-sm text-zinc-200">{it.label}</Label>
-              <p className="text-xs text-zinc-500">{it.hint}</p>
+        {ITEMS.map((it) => {
+          // в строгом режиме WIF и hex включаются принудительно, остальные детекторы
+          // перекрываются (выключаются) — переключатели показывают фактическое поведение
+          const forced = strict && (it.key === "detect_wif" || it.key === "detect_hex");
+          const overridden = strict && OVERRIDDEN.has(it.key);
+          const checked = overridden ? forced : options[it.key];
+          return (
+            <div
+              key={it.key}
+              className={`flex items-center justify-between gap-3 py-2.5 ${overridden ? "opacity-50" : ""}`}
+            >
+              <div className="min-w-0">
+                <Label className={it.key === "keys_hex_wif_only" ? "text-sm text-emerald-300" : "text-sm text-zinc-200"}>
+                  {it.label}
+                </Label>
+                <p className="text-xs text-zinc-500">{it.hint}</p>
+              </div>
+              <Switch
+                checked={checked}
+                onCheckedChange={(v) => onChange({ ...options, [it.key]: v })}
+                disabled={disabled || overridden}
+                aria-label={it.label}
+                className="data-[state=checked]:bg-emerald-500"
+              />
             </div>
-            <Switch
-              checked={options[it.key]}
-              onCheckedChange={(v) => onChange({ ...options, [it.key]: v })}
-              disabled={disabled}
-              aria-label={it.label}
-              className="data-[state=checked]:bg-emerald-500"
-            />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

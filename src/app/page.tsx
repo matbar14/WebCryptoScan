@@ -154,11 +154,19 @@ export default function Home() {
       custom?: string;
       engines?: string[];
       token?: string;
+      urls?: string[];
+      keywords?: string[];
       max_urls?: number;
       max_pages?: number;
       max_files?: number;
-    }) =>
-      runJob(() => scanGlobal({ ...p, options }).then((r) => r.job_id)),
+      keys_only?: boolean;
+    }) => {
+      const { keys_only, ...rest } = p;
+      const opts = keys_only === undefined
+        ? options
+        : { ...options, keys_hex_wif_only: keys_only };
+      return runJob(() => scanGlobal({ ...rest, options: opts }).then((r) => r.job_id));
+    },
     [options, runJob],
   );
 

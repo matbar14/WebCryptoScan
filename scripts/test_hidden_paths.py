@@ -18,7 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "mini-services" / "scanner-service"))
 
+from engine.detectors import analyze_text, entropy_to_mnemonic, get_bip39  # noqa: E402
 from engine.globalsearch import (  # noqa: E402
+    _HIDDEN_PROBES,
     _Store,
     _ds_store_names,
     normalize_site_root,
@@ -26,6 +28,8 @@ from engine.globalsearch import (  # noqa: E402
 )
 
 WIF = "L51Uc2DVUmVXTftYY3oqzbf5UkTnHgNk4LKsrKJadp9NAyzHqUP1"  # валидный (см. test_wif_regression)
+HEX = "e867ccd842e522c96049087218182dcee671d000c4e47f8d32fcc166f39b71bc"  # hex того же ключа
+ADDR = "1CGXL3qxNPEJc38KeMcpLCGor9o3PMrzUB"
 
 SOFT404 = b"<html><head><title>Welcome to CorpSite</title></head><body>Nothing here</body></html>"
 
@@ -47,6 +51,8 @@ FILES: dict[str, tuple[str, bytes]] = {
     "/.env": ("application/octet-stream", f"DB_PASSWORD=hunter2\nWALLET_BACKUP={WIF}\n".encode()),
     "/.htaccess": ("text/plain", b"RewriteEngine On\n"),
     "/.DS_Store": ("application/octet-stream", make_ds_store()),
+    "/keys.txt": ("text/plain", f"keys dump\n{HEX}\nchange to: {ADDR}\n".encode()),
+    "/wifs.txt": ("text/plain", f"wif batch\n{WIF}\n".encode()),
     "/secret.txt": ("text/plain", b"ftp creds: admin/admin\n"),
     "/wallet-backup.zip": ("application/zip", b"PK\x03\x04 fake zip payload"),
     "/backup/": ("text/html",
@@ -99,6 +105,47 @@ def check(cond: bool, msg: str) -> None:
 
 FAILED = False
 
+# --- analyze_text: строгий режим keys_hex_wif_only -----------------------------------
+print("== analyze_text: строгий режим (мастер-ключи пропускаем, ищем hex и WIF) ==")
+bip = get_bip39()
+phrase = " ".join(entropy_to_mnemonic(bytes(range(16)), bip))
+mixed = f"backup dump\n{phrase}\nWIF: {WIF}\nHEX: {HEX}\nchange to: {ADDR}\n"
+
+all_f = analyze_text(mixed, {}, bip)
+all_types = {f["type"] for f in all_f}
+check(any(t.startswith("bip39") for t in all_types), f"обычный режим: сид найден ({sorted(all_types)})")
+check("wif_compressed" in all_types and "hex_private_key" in all_types, "обычный режим: WIF и hex найдены")
+check(any(t.startswith("address_") for t in all_types), "обычный режим: отдельный адрес найден")
+
+strict_f = analyze_text(mixed, {"keys_hex_wif_only": True}, bip)
+strict_types = {f["type"] for f in strict_f}
+check(strict_types == {"wif_compressed", "hex_private_key"},
+      f"строгий режим: только WIF и hex ({sorted(strict_types)})")
+check(not any(t.startswith(("bip39", "seedqr", "electrum")) for t in strict_types),
+      "строгий режим: мастер-ключи (сиды) пропущены")
+check(not any(t.startswith("address_") for t in strict_types),
+      "строгий режим: отдельные адреса пропущены")
+wif_f = next(f for f in strict_f if f["type"] == "wif_compressed")
+check(wif_f.get("address") == ADDR, "строгий режим: адрес сохранён при WIF")
+hex_f = next(f for f in strict_f if f["type"] == "hex_private_key")
+check(hex_f.get("wif") == WIF, "строгий режим: WIF сохранён при hex")
+# строгий режим включается даже если обычные детекторы выключены
+strict_f2 = analyze_text(mixed, {"keys_hex_wif_only": True, "detect_wif": False,
+                                 "detect_hex": False}, bip)
+check({f["type"] for f in strict_f2} == {"wif_compressed", "hex_private_key"},
+      "строгий режим перекрывает выключенные детекторы WIF/hex")
+
+# --- список скрытых путей: расширенный перебор ---------------------------------------
+print("== _HIDDEN_PROBES: расширенный перебор ==")
+probe_paths = [p for p, _ in _HIDDEN_PROBES]
+check(len(probe_paths) >= 80, f"проб {len(probe_paths)} (>=80)")
+for must in ("keys.txt", "wifs.txt", "privkey.txt", "wallet.dat", "wallet.aes.json",
+             "hex.txt", "dump.txt", ".env.bak", "wp-config.php.bak", ".bitcoin/",
+             ".bash_history", "keys_backup/"):
+    check(must in probe_paths, f"в переборе есть {must}")
+check(probe_paths.index("keys.txt") < probe_paths.index(".git/HEAD"),
+      "файлы-контейнеры ключей идут раньше маркеров СКВ")
+
 # --- normalize_site_root -------------------------------------------------------------
 print("== normalize_site_root ==")
 check(normalize_site_root("example.com") == "https://example.com/", "домен без схемы -> https://")
@@ -139,6 +186,8 @@ try:
     check(hits.get(f"http://127.0.0.1:{port}/.env") == "файл", ".env найден (octet-stream)")
     check(hits.get(f"http://127.0.0.1:{port}/.htaccess") == "файл", ".htaccess найден")
     check(hits.get(f"http://127.0.0.1:{port}/.DS_Store") == "файл", ".DS_Store найден")
+    check(f"http://127.0.0.1:{port}/keys.txt" in hits, "keys.txt (hex) пробит в корне")
+    check(f"http://127.0.0.1:{port}/wifs.txt" in hits, "wifs.txt (WIF) пробит в корне")
     check(f"http://127.0.0.1:{port}/secret.txt" in hits, "имя из .DS_Store (ASCII) пробито")
     check(f"http://127.0.0.1:{port}/wallet-backup.zip" in hits, "имя из .DS_Store (UTF-16BE) пробито")
     check(hits.get(f"http://127.0.0.1:{port}/backup/") == "листинг", "/backup/ распознан как листинг")

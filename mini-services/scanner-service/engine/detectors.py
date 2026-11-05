@@ -225,7 +225,12 @@ class Wordlist12:
 # --- Общий анализ текста QR ----------------------------------------------------
 
 def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
-    """Возвращает список находок всех поддерживаемых типов в одном тексте QR-кода."""
+    """Возвращает список находок всех поддерживаемых типов в одном тексте QR-кода.
+
+    Строгий режим keys_hex_wif_only: цель — только hex- и WIF-ключи; мастер-ключи
+    (сид-фразы BIP39/Electrum, SeedQR), mini-ключи и отдельные адреса пропускаются.
+    Адрес при этом остаётся при ключе — validate_wif/validate_hex_key сами его вшивают.
+    """
     results: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
@@ -236,26 +241,27 @@ def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
             results.append(f)
 
     tokens = _tokens(text)
+    only_keys = bool(options.get("keys_hex_wif_only"))
 
-    if options.get("detect_wif", True):
+    if options.get("detect_wif", True) or only_keys:
         for m in B58_TOKEN_RE.finditer(text):
             f = validate_wif(m.group(0))
             if f:
                 push(f.to_dict())
 
-    if options.get("detect_mini", True):
+    if options.get("detect_mini", True) and not only_keys:
         for m in MINI_TOKEN_RE.finditer(text):
             f = validate_mini_key(m.group(0))
             if f:
                 push(f.to_dict())
 
-    if options.get("detect_hex", True):
+    if options.get("detect_hex", True) or only_keys:
         for m in HEX_TOKEN_RE.finditer(text):
             f = validate_hex_key(m.group(0))
             if f:
                 push(f.to_dict())
 
-    if options.get("detect_seed", True):
+    if options.get("detect_seed", True) and not only_keys:
         for f in bip39.scan_text(text):
             push(f)
 
@@ -281,7 +287,7 @@ def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
             # Современные сиды Electrum (12 слов из 2048-словаря) неотличимы по словарю
             # от BIP39: их ловит bip39.scan_text с checksum=FAIL — см. подсказку в detail.
 
-    if options.get("detect_addresses", True):
+    if options.get("detect_addresses", True) and not only_keys:
         for f in detect_addresses_in_text(text):
             push(f)
 
@@ -289,8 +295,10 @@ def analyze_text(text: str, options: dict, bip39: Bip39) -> list[dict]:
 
 
 def analyze_bytes(raw: bytes, options: dict, bip39: Bip39) -> list[dict]:
-    """Анализ исходных байтов QR (byte-mode): Standard SeedQR."""
-    if not options.get("detect_seed", True) or not options.get("detect_seedqr", True):
+    """Анализ исходных байтов QR (byte-mode): Standard SeedQR.
+    В строгом режиме (только hex/WIF) сид-форматы пропускаются."""
+    if not options.get("detect_seed", True) or not options.get("detect_seedqr", True) \
+            or options.get("keys_hex_wif_only"):
         return []
     if not raw:
         return []
