@@ -259,10 +259,11 @@ GITHUB_PRESETS: dict[str, dict] = {
         ],
     },
     "known_seeds": {
-        "label": "Известные тестовые сиды",
+        "label": "Известные тестовые ключи и сиды",
         "queries": [
             '"abandon abandon abandon abandon abandon abandon abandon abandon"',
             '"candy maple cake sugar pudding cream honey"',
+            '"5HpHagT65TZzG1PH3CSu63k8DbpvD8s5ip4nEB3kEsreAnchuDf"',
         ],
     },
     "bip39_json": {
@@ -275,6 +276,7 @@ GITHUB_PRESETS: dict[str, dict] = {
 }
 
 DORK_ENGINE_LABELS = {
+    "arquivo": "Arquivo.pt (веб-архив, из дата-центров)",
     "bing": "Bing (из дата-центров, ключевые слова)",
     "marginalia": "Marginalia (старый веб, из дата-центров)",
     "baidu": "Baidu (локально, полные dork)",
@@ -724,6 +726,18 @@ def _replay_url(provider: str, it: dict) -> str:
 _BING_REDIR_RE = re.compile(r'u=a1([A-Za-z0-9_-]+)')
 _ALGO_RE = re.compile(r'<li class="b_algo".*?</li>', re.S)
 _HREF_RE = re.compile(r'<a[^>]+href="([^"]+)"', re.I)
+_BING_TITLE_RE = re.compile(r'<h2[^>]*>(.*?)</h2>', re.S)
+_TAG_RE = re.compile(r'<[^>]+>')
+
+
+def _query_tokens(q: str) -> list[str]:
+    """Значимые токены запроса для проверки релевантности выдачи."""
+    raw = re.findall(r"[a-zа-яё0-9][a-zа-яё0-9_.-]{3,}", (q or "").lower())
+    out = list(raw)
+    for t in raw:
+        if "." in t:  # wallet.dat -> также wallet (дот-токены в заголовках могут без точки)
+            out += [p for p in t.split(".") if len(p) >= 4]
+    return sorted(set(out))
 
 
 def _decode_bing_href(href: str) -> str:
@@ -743,6 +757,7 @@ def _decode_bing_href(href: str) -> str:
 
 def serp_bing(query: str, max_results: int = 20) -> dict:
     out: list[str] = []
+    pairs: list[tuple[str, str]] = []   # (заголовок, url) — для проверки релевантности
     last_empty = False
     first = 1
     while len(out) < max_results and first <= 21:
@@ -753,10 +768,13 @@ def serp_bing(query: str, max_results: int = 20) -> dict:
             break
         found = 0
         for block in _ALGO_RE.findall(r.text):
+            m_title = _BING_TITLE_RE.search(block)
+            title = _TAG_RE.sub(" ", m_title.group(1)) if m_title else ""
             for href in _HREF_RE.findall(block):
                 real = _decode_bing_href(href)
                 if real and real.startswith("http") and _is_fetchable_url(real):
                     out.append(real)
+                    pairs.append((title, real))
                     found += 1
                     break  # одна ссылка на результат
         if not found:
@@ -772,6 +790,16 @@ def serp_bing(query: str, max_results: int = 20) -> dict:
     uniq = [u for u in out if not (u in seen or seen.add(u))]
     if not uniq:
         return {"urls": [], "error": "Bing: выдача пуста или анти-бот блокировка"}
+    # Bing из дата-центров иногда не блокирует запрос, а ПОДСТАВЛЯЕТ нерелевант
+    # (популярные страницы вообще мимо темы). Если ни в одном заголовке/URL нет
+    # ни одного токена запроса — это мусор, честно признаём блокировку.
+    if len(pairs) >= 4:
+        toks = _query_tokens(query)
+        if toks and not any(
+                any(t in (ti + " " + u).lower() for t in toks) for ti, u in pairs):
+            return {"urls": [], "error":
+                    "Bing: выдача не по запросу — анти-бот из дата-центра "
+                    "(на локальной машине обычно работает)"}
     return {"urls": uniq[:max_results], "error": None}
 
 
@@ -862,12 +890,51 @@ def serp_baidu(query: str, max_results: int = 20) -> dict:
     return {"urls": out[:max_results], "error": None}
 
 
+def serp_arquivo(query: str, max_results: int = 20) -> dict:
+    """Полнотекстовый поиск по веб-архиву arquivo.pt (открытый API).
+
+    Работает из дата-центров и даёт релевантную выдачу (проверено 06.11.2026),
+    в отличие от Bing из дата-центров, который подменяет результаты мусором.
+    Индексирует и международные сайты; возвращает replay-ссылки (noFrame) —
+    они качаются из дата-центров без блокировок. Снимки идут от новых к старым,
+    один оригинальный URL берём один раз (самый свежий).
+    """
+    try:
+        r = _get("https://arquivo.pt/textsearch",
+                 params={"q": query, "maxItems": str(min(max_results * 2, 50))},
+                 timeout=(12, 30))
+    except requests.RequestException as e:
+        return {"urls": [], "error": f"Arquivo: {type(e).__name__}"}
+    if r.status_code != 200:
+        return {"urls": [], "error": f"Arquivo: HTTP {r.status_code}"}
+    try:
+        data = r.json()
+    except Exception:  # noqa: BLE001
+        return {"urls": [], "error": "Arquivo: некорректный JSON"}
+    out: list[str] = []
+    seen_orig: set[str] = set()
+    for it in data.get("response_items") or []:
+        orig = (it.get("originalURL") or "").strip().lower()
+        if orig:
+            if orig in seen_orig:
+                continue
+            seen_orig.add(orig)
+        u = (it.get("linkToNoFrame") or "").strip()
+        if u.startswith("http") and _is_fetchable_url(u):
+            out.append(u)
+        if len(out) >= max_results:
+            break
+    if not out:
+        return {"urls": [], "error": "Arquivo: по запросу в архиве ничего не найдено"}
+    return {"urls": out, "error": None}
+
+
 SERPS = {"bing": serp_bing, "duckduckgo": serp_duckduckgo, "baidu": serp_baidu,
-         "marginalia": serp_marginalia}
+         "marginalia": serp_marginalia, "arquivo": serp_arquivo}
 SERP_LABELS = {"bing": "Bing", "marginalia": "Marginalia", "baidu": "Baidu",
-               "duckduckgo": "DuckDuckGo"}
+               "duckduckgo": "DuckDuckGo", "arquivo": "Arquivo.pt (веб-архив)"}
 # движки, которым операторы не по зубам из дата-центров (им отдаём plain-вариант запроса)
-PLAIN_ONLY_ENGINES = {"bing", "marginalia"}
+PLAIN_ONLY_ENGINES = {"bing", "marginalia", "arquivo"}
 
 
 def file_links_from_html(html: str, base_url: str, limit: int = 12) -> list[str]:
@@ -1337,6 +1404,74 @@ def commoncrawl_list(mask: str, limit: int) -> dict:
 
 # --- Режим github ------------------------------------------------------------------------
 
+def sourcegraph_search(query: str, max_items: int = 20) -> dict:
+    """Анонимный поиск кода через Sourcegraph stream API (sourcegraph.com).
+
+    Индексирует публичный GitHub и другие хостинги; токен не нужен, работает
+    из дата-центров (проверено 06.11.2026). Синтаксис близок к GitHub:
+    filename: переводится в file:, кавычки и lang:/file: поддерживаются.
+    Формат ответа тот же, что у github_search: [{repo, path, raw}].
+    """
+    q = re.sub(r"\bfilename:", "file:", (query or "").strip()).strip()
+    if not q:
+        return {"files": [], "error": "пустой запрос"}
+    q = f"{q} count:{min(30, max(5, max_items))} timeout:20s"
+    try:
+        r = _get("https://sourcegraph.com/.api/search/stream",
+                 params={"q": q},
+                 headers={"Accept": "text/event-stream"}, timeout=(15, 45))
+    except requests.RequestException as e:
+        return {"files": [], "error": f"Sourcegraph: {type(e).__name__}"}
+    if r.status_code != 200:
+        return {"files": [], "error": f"Sourcegraph: HTTP {r.status_code}"}
+    files: list[dict] = []
+    seen: set[str] = set()
+    ev = ""
+    alerts: list[str] = []
+    for line in r.text.splitlines():
+        if line.startswith("event: "):
+            ev = line[7:].strip()
+            continue
+        if not line.startswith("data: "):
+            continue
+        try:
+            data = json.loads(line[6:])
+        except Exception:  # noqa: BLE001 — служебные события без JSON пропускаем
+            continue
+        if ev == "matches" and isinstance(data, list):
+            for m in data:
+                repo = (m.get("repository") or "").strip().rstrip("/")
+                path = (m.get("path") or "").strip()
+                if not repo or not path:
+                    continue
+                if repo.startswith("github.com/"):
+                    owner_repo = repo[len("github.com/"):].strip("/")
+                    raw = (f"https://raw.githubusercontent.com/{owner_repo}"
+                           f"/HEAD/{quote(path)}")
+                    if raw not in seen:
+                        seen.add(raw)
+                        files.append({"repo": owner_repo, "path": path, "raw": raw})
+        elif ev == "alert" and isinstance(data, list):
+            alerts += [str(a)[:120] for a in data]
+        elif ev == "error":
+            # событие error — список {"message": ...} или строка
+            if isinstance(data, list):
+                for a in data:
+                    if isinstance(a, dict) and a.get("message"):
+                        alerts.append(str(a["message"])[:120])
+                    else:
+                        alerts.append(str(a)[:120])
+            elif isinstance(data, dict) and data.get("message"):
+                alerts.append(str(data["message"])[:120])
+        if len(files) >= max_items:
+            break
+    if files:
+        return {"files": files[:max_items], "error": None}
+    if alerts:
+        return {"files": [], "error": f"Sourcegraph: {'; '.join(alerts[:2])}"}
+    return {"files": [], "error": "Sourcegraph: по запросу ничего не найдено"}
+
+
 def github_search(query: str, token: str, max_items: int = 20) -> dict:
     if not token:
         return {"files": [], "error": "нужен GitHub-токен (поле на панели или переменная GITHUB_TOKEN)"}
@@ -1766,23 +1901,56 @@ def run_global(job_dir: Path, params: dict, progress=None) -> dict:
         token = str(params.get("token", "") or "").strip()
         max_files = max(3, min(int(params.get("max_files", 20)), 60))
 
-        files: dict[str, dict] = {}
-        err = None
+        # Sourcegraph — анонимный поиск по публичному коду (работает без токена
+        # и из дата-центров); GitHub API подключается только при наличии токена.
+        sg_files: dict[str, dict] = {}
+        gh_files: dict[str, dict] = {}
+        sg_errs: list[str] = []
+        gh_errs: list[str] = []
         for i, q in enumerate(queries):
-            try:
-                res = github_search(q, token, 30)
-            except Exception as e:  # noqa: BLE001
-                res = {"files": [], "error": f"{type(e).__name__}"}
+            res = sourcegraph_search(q, 30)
             for f in res["files"]:
-                files.setdefault(f["raw"], f)
+                sg_files.setdefault(f["raw"], f)
             if res["error"]:
-                err = res["error"]
-            prog(f"GitHub: поиск {i + 1}/{len(queries)}", i + 1, len(queries))
-        result["sources"]["github"] = {
-            "count": len(files), "queries": len(queries), "error": err,
+                sg_errs.append(res["error"])
+            if token:
+                try:
+                    res2 = github_search(q, token, 30)
+                except Exception as e:  # noqa: BLE001
+                    res2 = {"files": [], "error": f"{type(e).__name__}"}
+                for f in res2["files"]:
+                    gh_files.setdefault(f["raw"], f)
+                if res2["error"]:
+                    gh_errs.append(res2["error"])
+            prog(f"Поиск кода: запрос {i + 1}/{len(queries)}", i + 1, len(queries))
+
+        def _src_err_note(errs: list[str], files: dict) -> tuple[str | None, str | None]:
+            """Ошибки отдельных запросов не перекрывают успешный поиск: если файлы
+            есть — уходим в note, error только при полном нуле."""
+            joined = "; ".join(errs[:2]) if errs else None
+            return (joined, None) if not files else (None, joined)
+
+        sg_err, sg_note = _src_err_note(sg_errs, sg_files)
+        result["sources"]["sourcegraph"] = {
+            "count": len(sg_files), "queries": len(queries),
+            "error": sg_err, "note": sg_note,
         }
+        if token:
+            gh_err, gh_note = _src_err_note(gh_errs, gh_files)
+            result["sources"]["github"] = {
+                "count": len(gh_files), "queries": len(queries),
+                "error": gh_err, "note": gh_note,
+            }
+        else:
+            result["sources"]["github"] = {
+                "count": 0, "queries": len(queries),
+                "note": "GitHub API требует токен — выполнен анонимный поиск Sourcegraph",
+            }
+        all_files = dict(sg_files)
+        for f in gh_files.values():
+            all_files.setdefault(f["raw"], f)
         done = 0
-        for f in list(files.values())[:max_files]:
+        for f in list(all_files.values())[:max_files]:
             _fetch_item(f["raw"], store)
             done += 1
             if done % 5 == 0 or done == max_files:

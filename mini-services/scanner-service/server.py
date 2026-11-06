@@ -876,11 +876,11 @@ def scan_global(body: dict):
         token = str(body.get("token", "") or "").strip() or os.environ.get("GITHUB_TOKEN", "")
         if not presets and not custom:
             raise HTTPException(status_code=400, detail="Выберите пресет или введите свой запрос")
-        if not token:
-            raise HTTPException(status_code=400, detail="Укажите GitHub-токен (поиск кода требует авторизацию)")
+        # без токена работает анонимный поиск Sourcegraph; токен добавляет поиск GitHub API
         params.update(presets=presets, custom=custom, token=token,
                       max_files=int(body.get("max_files", 20)))
-        label = f"GitHub: {custom or ', '.join(GITHUB_PRESETS[p]['label'] for p in presets)}"
+        label = (f"GitHub: {custom or ', '.join(GITHUB_PRESETS[p]['label'] for p in presets)}"
+                 + ("" if token else " — анонимно (Sourcegraph)"))
 
     job = _new_job(label=label, source_type=f"global_{mode}", options=opts)
     job["progress"]["total"] = 0

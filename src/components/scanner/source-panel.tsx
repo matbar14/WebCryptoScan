@@ -52,7 +52,8 @@ const ENGINE_LIST: { id: string; label: string; hint: string }[] = [
 
 // веб-фаза краулера: текстовый поиск по тем же ключевым словам (страницы и файлы)
 const WEB_ENGINE_LIST: { id: string; label: string; hint: string }[] = [
-  { id: "bing", label: "Bing", hint: "из дата-центров" },
+  { id: "arquivo", label: "Arquivo.pt", hint: "веб-архив, полнотекстовый — работает из дата-центров" },
+  { id: "bing", label: "Bing", hint: "на локальной машине (из дата-центров часто мусор)" },
   { id: "marginalia", label: "Marginalia", hint: "независимый индекс, из дата-центров" },
   { id: "duckduckgo", label: "DuckDuckGo", hint: "на локальной машине" },
   { id: "baidu", label: "Baidu", hint: "на локальной машине" },
@@ -100,7 +101,7 @@ export function SourcePanel({
   const [preset, setPreset] = useState("");
   const [presets, setPresets] = useState<Record<string, Preset>>({});
   const [engines, setEngines] = useState<string[]>(["baidu", "so360", "duckduckgo", "wikimedia"]);
-  const [webEngines, setWebEngines] = useState<string[]>(["bing", "marginalia"]);
+  const [webEngines, setWebEngines] = useState<string[]>(["arquivo", "bing", "marginalia"]);
   const [maxNum, setMaxNum] = useState(30);
   const [siteUrl, setSiteUrl] = useState("");
   const [siteArchive, setSiteArchive] = useState<"auto" | "yes" | "no">("auto");
@@ -118,7 +119,7 @@ export function SourcePanel({
   const [gMask, setGMask] = useState("");
   const [gDorkPresets, setGDorkPresets] = useState<string[]>(["open_dirs"]);
   const [gGhPresets, setGGhPresets] = useState<string[]>(["wallet_files"]);
-  const [gEngines, setGEngines] = useState<string[]>(["bing", "marginalia"]);
+  const [gEngines, setGEngines] = useState<string[]>(["arquivo", "bing", "marginalia"]);
   const [gCustom, setGCustom] = useState("");
   const [gToken, setGToken] = useState("");
   const [gMaxUrls, setGMaxUrls] = useState(60);
@@ -177,7 +178,7 @@ export function SourcePanel({
             ? gHidOk
             : gMode === "commoncrawl"
               ? gMask.trim().length > 0
-              : gGhOk && gToken.trim().length > 0;
+              : gGhOk;
 
   const startGlobal = () => {
     if (gMode === "archive") {
@@ -836,19 +837,20 @@ export function SourcePanel({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="g-gh-token" className="text-zinc-300">GitHub-токен (поиск кода требует авторизацию)</Label>
+              <Label htmlFor="g-gh-token" className="text-zinc-300">GitHub-токен (опционально)</Label>
               <Input
                 id="g-gh-token"
                 type="password"
-                placeholder="ghp_…"
+                placeholder="ghp_… — можно оставить пустым"
                 value={gToken}
                 onChange={(e) => setGToken(e.target.value)}
                 disabled={busy}
                 className="bg-zinc-950/60 border-zinc-800 font-mono text-sm"
               />
               <p className="text-xs text-zinc-500">
-                Токен используется только на время джобы и не сохраняется. Скачанные файлы
-                репозиториев идут в детекторы строк (WIF, сиды, адреса).
+                Без токена работает анонимный поиск Sourcegraph (публичный код GitHub).
+                Токен добавляет официальный API GitHub. Используется только на время джобы
+                и не сохраняется. Скачанные файлы идут в детекторы строк (WIF, сиды, адреса).
               </p>
             </div>
             <div className="space-y-2">
